@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -19,6 +20,9 @@ import (
 var knownHostsMu sync.Mutex
 
 func knownHostsPath() (string, error) {
+	if p := os.Getenv("TERMORA_KNOWN_HOSTS"); p != "" { // tests
+		return p, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -145,4 +149,64 @@ func hostKeyAlgorithms(addr string) []string {
 		}
 	}
 	return algos
+}
+
+// KnownHost is one entry of ~/.ssh/known_hosts.
+type KnownHost struct {
+	Line        int    `json:"line"`
+	Hosts       string `json:"hosts"` // comma-separated, or "(hashed)"
+	KeyType     string `json:"keyType"`
+	Fingerprint string `json:"fingerprint"`
+	Marker      string `json:"marker"` // @cert-authority / @revoked
+}
+
+func (a *App) ListKnownHosts() ([]KnownHost, error) {
+	knownHostsMu.Lock()
+	defer knownHostsMu.Unlock()
+	path, err := knownHostsPath()
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []KnownHost
+	for i, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		marker, hosts, key, _, _, err := ssh.ParseKnownHosts([]byte(t))
+		if err != nil {
+			continue
+		}
+		h := strings.Join(hosts, ", ")
+		if strings.HasPrefix(h, "|1|") {
+			h = "(hashed host name)"
+		}
+		out = append(out, KnownHost{Line: i + 1, Hosts: h, KeyType: key.Type(), Fingerprint: ssh.FingerprintSHA256(key), Marker: marker})
+	}
+	return out, nil
+}
+
+// RemoveKnownHost deletes one line (1-based) from known_hosts, e.g. after a
+// server was reinstalled and its key changed.
+func (a *App) RemoveKnownHost(line int) error {
+	knownHostsMu.Lock()
+	defer knownHostsMu.Unlock()
+	path, err := knownHostsPath()
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(b), "\n")
+	if line < 1 || line > len(lines) {
+		return errors.New("that entry no longer exists")
+	}
+	lines = append(lines[:line-1], lines[line:]...)
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
 }

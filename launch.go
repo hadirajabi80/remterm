@@ -83,6 +83,6 @@ func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	wruntime.WindowSetAlwaysOnTop(a.ctx, true)
 	wruntime.WindowSetAlwaysOnTop(a.ctx, false)
 	if cwd := cwdFromArgs(data.Args); cwd != "" {
-		wruntime.EventsEmit(a.ctx, "launch:open", cwd)
+		a.emit("launch:open", cwd)
 	}
 }

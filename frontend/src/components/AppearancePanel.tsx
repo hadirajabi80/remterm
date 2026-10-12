@@ -9,6 +9,7 @@ export interface TypingPrefs {
   autosuggest: boolean;
   historyOnUp: boolean;
   defaultShell: string;
+  recordLogs: boolean;
 }
 
 export function AppearancePanel(props: {
@@ -207,6 +208,17 @@ export function AppearancePanel(props: {
                 Right-click a folder, a file or empty space in a folder to open a terminal there. On Windows 11 it is under
                 "Show more options".
               </span>
+            </span>
+          </label>
+        </section>
+
+        <section>
+          <h3>Session logs</h3>
+          <label className="toggle">
+            <input type="checkbox" checked={props.typing.recordLogs} onChange={(e) => props.onTyping({ ...props.typing, recordLogs: e.target.checked })} />
+            <span>
+              <b>Record terminal sessions</b>
+              <span className="hint">Keeps the last 5 sessions per server (bookmark to keep longer). Hidden password input is never recorded.</span>
             </span>
           </label>
         </section>

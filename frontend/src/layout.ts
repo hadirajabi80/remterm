@@ -98,3 +98,26 @@ export function neighbor(l: Layout, from: string, dir: Direction): string | null
   }
   return best;
 }
+
+/** Even split of `items` along `dir` (a chain of binary splits). */
+function chain(items: Layout[], dir: 'row' | 'col', key: () => string): Layout {
+  if (items.length === 1) return items[0];
+  const [first, ...rest] = items;
+  return { type: 'split', key: key(), dir, ratio: 1 / items.length, a: first, b: chain(rest, dir, key) };
+}
+
+/** Grid of panes, as square as possible (2 → side by side, 4 → 2×2, 6 → 3×2). */
+export function gridLayout(paneKeys: string[], key: () => string): Layout {
+  const cols = Math.ceil(Math.sqrt(paneKeys.length));
+  const rows: Layout[] = [];
+  for (let i = 0; i < paneKeys.length; i += cols) {
+    rows.push(chain(paneKeys.slice(i, i + cols).map((k) => ({ type: 'pane', key: k })), 'row', key));
+  }
+  return chain(rows, 'col', key);
+}
+
+/** Same tree with every pane key replaced through `map` and fresh split keys. */
+export function remapLayout(l: Layout, map: Record<string, string>, key: () => string): Layout {
+  if (l.type === 'pane') return { type: 'pane', key: map[l.key] };
+  return { ...l, key: key(), a: remapLayout(l.a, map, key), b: remapLayout(l.b, map, key) };
+}

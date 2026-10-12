@@ -24,37 +24,37 @@ UI-only development in a browser (fake in-memory backend, no SSH):
 npm --prefix frontend run dev
 ```
 
-## Features (phase 1)
+## Features
 
-- Saved hosts with groups and environment tags (prod tabs get a red frame/badge), `~/.ssh/config` import (incl. `ProxyJump`)
-- Every server you log into is remembered: quick connects (`user@host:port`) are saved to the *Quick connect* group after a successful login, connecting to an already-saved server reuses its settings, and hosts are ordered by last use (welcome screen "Recent", command palette)
-- Auth: private keys (default `~/.ssh/id_*` or a chosen file), Windows OpenSSH agent, password / keyboard-interactive; prompts for password or key passphrase when needed and can remember it in **Windows Credential Manager**
-- Host key verification against `~/.ssh/known_hosts` (shared with OpenSSH): asks on first connect, refuses changed keys
-- Jump hosts, startup command per host
-- Keepalive + latency in the status bar; automatic reconnect with backoff when the connection drops
-- Tabs, command palette (`Ctrl+Shift+P`) with quick connect (`user@host:port`)
-- ~75 built-in snippets with explanations (.NET, Docker, Compose, Node.js, PM2, Angular, React, Nginx, systemd, Git, Go) — catalog in `snippets.go`. Commands can use `{{name}}` / `{{name:default}}` placeholders; Termora asks for the values before running and remembers them. Click a snippet in the sidebar for its details
-- **Split panes**: split right/down (`Alt+Shift+=` / `Alt+Shift+-` / `Alt+Shift+D`), drag dividers, `Alt+Arrows` to move, zoom a pane (`Ctrl+Shift+Z`), broadcast typing to all panes (`Ctrl+Shift+A`); palette `Shift+Enter` opens a host or shell in a split
-- **Local terminals** via ConPTY: PowerShell 7, Windows PowerShell, Command Prompt, WSL, Git Bash (auto-detected); `Ctrl+Shift+`` opens the default one
-- **Appearance** (`Ctrl+,`): 11 backgrounds (gradients and generated scenes) or your own image with darken/blur, 9 color schemes, font size — saved in the data file
-- **Command history**: commands from every server and local shell are remembered; gray suggestions while typing (`→` accepts, `Ctrl+→` one word), `↑` at a prompt opens a searchable list (this server first), History tab in the sidebar. Passwords typed at no-echo prompts, lines starting with a space and commands containing `password=`/`--token` etc. are never stored
-- **Explorer integration**: right-click a folder, inside a folder, a drive or a file → *Open in Termora* opens a local terminal there; a running Termora opens it as a new tab (single instance). `Termora.exe --cwd <folder>` does the same from scripts
-- Find in scrollback, clickable links, Windows-Terminal-style copy/paste (`Ctrl+C` with selection, `Ctrl+V`, right-click), zoom
+**Hosts & connections**
+- Hosts in **nested groups** (`Clients/Acme/Prod`) with **group settings** inherited by every host below (identity, jump host, proxy, agent forwarding, environment variables, startup command, color scheme); **tags** with tag filters; environment badges (prod gets a red frame)
+- Protocols: **SSH**, **Telnet** (window size, terminal type, auto-login), **Serial** (port, baud, data/stop bits, parity), plus local shells
+- **Host chaining**: jump hosts may have their own jump hosts (loops detected); **SOCKS5 / HTTP proxy** for the first hop; **agent forwarding** (Windows OpenSSH agent or Termora's keys); **environment variables** (SendEnv/AcceptEnv)
+- Import from `~/.ssh/config` (incl. `ProxyJump`) and **PuTTY** sessions; quick connect remembers servers; "connect to all hosts" of a group in one tab
+- Host key verification against `~/.ssh/known_hosts` with a **Known hosts** manager
 
-## Layout
+**Keychain**
+- **Generate** Ed25519 / ECDSA / RSA keys, **import** keys (file or paste, passphrase-protected), **OpenSSH certificates**, copy public key
+- **Install a key on a server** (appends to `authorized_keys` once and links it to the host)
+- **Identities**: username + password/key reused by many hosts or whole groups; secrets in Windows Credential Manager
 
-| Path | What |
-|---|---|
-| `main.go` | Wails window setup |
-| `app.go` | Bound API: hosts, snippets, key picker |
-| `ssh.go` | Sessions: dial (incl. jump host), auth chain, PTY, output pump, keepalive |
-| `hostkeys.go` | known_hosts verification |
-| `sshconfig.go` | `~/.ssh/config` import |
-| `store.go` / `secrets.go` | JSON store in `%APPDATA%\Termora`, secrets in the OS keyring |
-| `frontend/src/terminal.ts` | `TermSession`: xterm + connection lifecycle, reconnect, clipboard |
-| `frontend/src/App.tsx` | Layout, tabs, shortcuts, dialogs |
+**Files & tunnels**
+- **SFTP**: two panes (this PC or any host on either side), drag & drop between panes and **from Explorer**, multi-select, rename, delete, new folder, **permissions**, hidden files, sortable columns, server-to-server copy, **transfers** with progress/cancel, **edit remote files** in your editor (every save uploads back)
+- **Port forwarding**: Local, Remote and Dynamic (SOCKS5) rules, start/stop, live status, **auto-start** with reconnect
 
-## Next phases
+**Terminal**
+- Tabs and **split panes** (`Alt+Shift+=`/`-`/`D`, drag dividers, `Alt+Arrows`, zoom `Ctrl+Shift+Z`), **broadcast input** (`Ctrl+Shift+A`), unread-output dots
+- **Workspaces**: save a tab's layout and connections (`Ctrl+S`) and reopen it in one click
+- **Snippets** (~75 built in, `{{placeholders}}`), **run a snippet on several hosts** at once
+- **Command history** autocomplete (gray suggestion, `↑` list) — passwords at hidden prompts are never stored
+- **Session logs**: recorded per session (last 5 per server), bookmarks with notes, replay with colors, search, export to .txt
+- Local terminals via ConPTY (PowerShell, cmd, WSL, Git Bash), Explorer **Open in Termora**
+- Appearance: backgrounds, 9 color schemes (per host or group too), font size; find in scrollback, clickable links, Windows-style copy/paste
 
-3. SFTP side panel, port-forwarding UI
-4. Server dashboard (CPU/RAM/disk, Docker & systemd actions), themes
+## Tests
+
+`go test -tags desktop,production ./...` runs unit tests plus integration tests against an in-process SSH server (password/key auth, identities, 3-hop jump chain, group inheritance, SFTP transfers, local + SOCKS forwarding, SOCKS proxy, Telnet negotiation, session-log retention) and ConPTY round-trips with the installed shells.
+
+## Not (yet) like Termius
+
+Cloud sync and team vaults (need a server), AWS/DigitalOcean/Azure import, FIDO2/biometric keys, Mosh, AI command generation.

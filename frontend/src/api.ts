@@ -1,5 +1,19 @@
 import type { CmdEntry } from './history';
-import type { Host, LocalShell, Snippet } from './types';
+import type {
+  FileEntry,
+  GroupConfig,
+  Host,
+  Identity,
+  KeyItem,
+  KnownHost,
+  LocalShell,
+  LogEntry,
+  Snippet,
+  TransferProgress,
+  Tunnel,
+  TunnelStatus,
+  Workspace,
+} from './types';
 
 // Wails injects window.go (bound Go methods) and window.runtime at load.
 declare global {
@@ -10,6 +24,8 @@ declare global {
       ClipboardGetText(): Promise<string>;
       ClipboardSetText(text: string): Promise<boolean>;
       BrowserOpenURL(url: string): void;
+      OnFileDrop?(cb: (x: number, y: number, paths: string[]) => void, useDropTarget: boolean): void;
+      OnFileDropOff?(): void;
     };
   }
 }
@@ -33,7 +49,7 @@ export interface ConnectResult {
 
 export const api = {
   listHosts: () => call<Host[] | null>('ListHosts').then((r) => r ?? []),
-  saveHost: (h: Host, secret: string) => call<Host>('SaveHost', h, secret),
+  saveHost: (h: Host, secret: string, proxyPassword = '') => call<Host>('SaveHost', h, secret, proxyPassword),
   deleteHost: (id: string) => call<void>('DeleteHost', id),
   clearSecret: (id: string) => call<void>('ClearSecret', id),
   pickKeyFile: () => call<string>('PickKeyFile'),
@@ -56,6 +72,77 @@ export const api = {
   addCommandHistory: (command: string, hostKey: string) => call<void>('AddCommandHistory', command, hostKey),
   deleteCommandHistory: (command: string) => call<void>('DeleteCommandHistory', command),
   clearCommandHistory: () => call<void>('ClearCommandHistory'),
+
+  // groups & identities
+  listGroups: () => call<GroupConfig[] | null>('ListGroups').then((r) => r ?? []),
+  saveGroup: (g: GroupConfig, proxyPassword = '') => call<GroupConfig>('SaveGroup', g, proxyPassword),
+  renameGroup: (from: string, to: string) => call<void>('RenameGroup', from, to),
+  deleteGroup: (path: string) => call<void>('DeleteGroup', path),
+  listIdentities: () => call<Identity[] | null>('ListIdentities').then((r) => r ?? []),
+  saveIdentity: (i: Identity, password: string) => call<Identity>('SaveIdentity', i, password),
+  clearIdentityPassword: (id: string) => call<void>('ClearIdentityPassword', id),
+  deleteIdentity: (id: string) => call<void>('DeleteIdentity', id),
+
+  // keychain
+  listKeys: () => call<KeyItem[] | null>('ListKeys').then((r) => r ?? []),
+  generateKey: (req: { label: string; type: string; bits: number; passphrase: string; savePassphrase: boolean }) =>
+    call<KeyItem>('GenerateKey', req),
+  importKey: (req: { label: string; privateKey: string; path: string; passphrase: string; savePassphrase: boolean }) =>
+    call<KeyItem>('ImportKey', req),
+  updateKey: (id: string, label: string, certificate: string) => call<KeyItem>('UpdateKey', id, label, certificate),
+  setKeyPassphrase: (id: string, passphrase: string) => call<void>('SetKeyPassphrase', id, passphrase),
+  deleteKey: (id: string) => call<void>('DeleteKey', id),
+  exportKeyToHost: (req: { keyId: string; hostId: string; password: string; path: string }) => call<void>('ExportKeyToHost', req),
+
+  // port forwarding
+  listTunnels: () => call<Tunnel[] | null>('ListTunnels').then((r) => r ?? []),
+  saveTunnel: (t: Tunnel) => call<Tunnel>('SaveTunnel', t),
+  deleteTunnel: (id: string) => call<void>('DeleteTunnel', id),
+  startTunnel: (id: string, password = '') => call<void>('StartTunnel', id, password),
+  stopTunnel: (id: string) => call<void>('StopTunnel', id),
+  tunnelStatuses: () => call<TunnelStatus[] | null>('TunnelStatuses').then((r) => r ?? []),
+
+  // workspaces, logs, known hosts, imports
+  listWorkspaces: () => call<Workspace[] | null>('ListWorkspaces').then((r) => r ?? []),
+  saveWorkspace: (w: Workspace) => call<Workspace>('SaveWorkspace', w),
+  deleteWorkspace: (id: string) => call<void>('DeleteWorkspace', id),
+  listLogs: () => call<LogEntry[] | null>('ListLogs').then((r) => r ?? []),
+  readLog: (id: string) => call<string>('ReadLog', id),
+  setLogBookmark: (id: string, bookmarked: boolean, comment: string) => call<void>('SetLogBookmark', id, bookmarked, comment),
+  deleteLog: (id: string) => call<void>('DeleteLog', id),
+  exportLog: (id: string) => call<string>('ExportLog', id),
+  setLogging: (enabled: boolean) => call<void>('SetLogging', enabled),
+  listKnownHosts: () => call<KnownHost[] | null>('ListKnownHosts').then((r) => r ?? []),
+  removeKnownHost: (line: number) => call<void>('RemoveKnownHost', line),
+  listSerialPorts: () => call<string[] | null>('ListSerialPorts').then((r) => r ?? []),
+  importPuTTY: () => call<number>('ImportPuTTY'),
+
+  // files (SFTP + local disk; fsId 'local' is the local disk)
+  openSftp: (req: { sessionId: string; hostId: string; password: string; savePassword: boolean }) => call<string>('OpenSftp', req),
+  closeSftp: (id: string) => call<void>('CloseSftp', id),
+  fsHome: (fsId: string) => call<string>('FsHome', fsId),
+  fsList: (fsId: string, dir: string) => call<FileEntry[] | null>('FsList', fsId, dir).then((r) => r ?? []),
+  fsParent: (fsId: string, path: string) => call<string>('FsParent', fsId, path),
+  fsMkdir: (fsId: string, path: string) => call<void>('FsMkdir', fsId, path),
+  fsRename: (fsId: string, from: string, to: string) => call<void>('FsRename', fsId, from, to),
+  fsDelete: (fsId: string, paths: string[]) => call<void>('FsDelete', fsId, paths),
+  fsChmod: (fsId: string, path: string, perm: number) => call<void>('FsChmod', fsId, path, perm),
+  fsTransfer: (req: { srcFs: string; paths: string[]; dstFs: string; dstDir: string }) => call<string>('FsTransfer', req),
+  cancelTransfer: (id: string) => call<void>('CancelTransfer', id),
+  fsOpen: (fsId: string, path: string) => call<void>('FsOpen', fsId, path),
+};
+
+export const events = {
+  on: (name: string, cb: (...data: any[]) => void) => window.runtime.EventsOn(name, cb),
+  tunnelStatus: (cb: (s: TunnelStatus) => void) => window.runtime.EventsOn('tunnel:status', cb),
+  transfer: (cb: (p: TransferProgress) => void) => window.runtime.EventsOn('fs:transfer', cb),
+  fsEdited: (cb: (fsId: string, path: string, error: string) => void) => window.runtime.EventsOn('fs:edited', cb),
+  fsClosed: (cb: (fsId: string) => void) => window.runtime.EventsOn('fs:closed', cb),
+  /** Files dropped from Explorer onto the window (x, y in CSS pixels). */
+  fileDrop: (cb: (x: number, y: number, paths: string[]) => void) => {
+    window.runtime.OnFileDrop?.(cb, false);
+    return () => window.runtime.OnFileDropOff?.();
+  },
 };
 
 export interface SessionHandlers {

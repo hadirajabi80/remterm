@@ -1,24 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, errorMessage, onLaunchOpen } from './api';
+import { api, cleanError, errorMessage, events, onLaunchOpen } from './api';
 import type { CursorAnchor } from './autocomplete';
 import { history, typingPrefs } from './history';
-import { leaves, neighbor, removePane, setRatio, splitPane, type Direction } from './layout';
+import { gridLayout, leaves, neighbor, remapLayout, removePane, setRatio, splitPane, type Direction } from './layout';
 import { TermSession, type AuthKind, type TermOptions } from './terminal';
 import { DEFAULT_APPEARANCE, backgroundCss, getScheme } from './themes';
-import type { Appearance, Host, LocalShell, Pane, PaneTarget, Snippet, Tab } from './types';
-import { byRecent, hostLabel, snippetVars } from './util';
+import { transfers } from './transfers';
+import type {
+  Appearance,
+  GroupConfig,
+  Host,
+  Identity,
+  KeyItem,
+  LocalShell,
+  Pane,
+  PaneTarget,
+  Snippet,
+  Tab,
+  Tunnel,
+  TunnelStatus,
+  Workspace,
+} from './types';
+import { byRecent, hostLabel, hostsInGroup, inherited, snippetVars } from './util';
 import { AppearancePanel } from './components/AppearancePanel';
 import { CommandPalette, type PaletteItem } from './components/CommandPalette';
 import { FindBar } from './components/FindBar';
 import { HistoryList } from './components/HistoryList';
 import { HostDialog } from './components/HostDialog';
+import { LogView } from './components/LogView';
 import { AuthDialog, ConfirmDialog } from './components/Modal';
-import { Sidebar, type Panel } from './components/Sidebar';
+import { PromptDialog } from './components/fields';
+import { SftpView } from './components/SftpView';
+import { Sidebar, type Panel, type SidebarCtx } from './components/Sidebar';
 import { SnippetDialog } from './components/SnippetDialog';
 import { SnippetVarsDialog } from './components/SnippetVarsDialog';
 import { StatusBar } from './components/StatusBar';
 import { TabBar, type TabView } from './components/TabBar';
 import { TabPanes } from './components/TabPanes';
+import {
+  GenerateKeyDialog,
+  GroupDialog,
+  IdentityDialog,
+  ImportKeyDialog,
+  KeyDetailsDialog,
+  PickHostsDialog,
+  TunnelDialog,
+} from './components/VaultDialogs';
 import { Welcome } from './components/Welcome';
 
 interface AuthRequest {
@@ -36,17 +63,23 @@ interface ConfirmRequest {
   run(): void | Promise<void>;
 }
 
+interface PromptRequest {
+  title: string;
+  label: string;
+  initial?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  run(value: string): void | Promise<void>;
+}
+
 interface Toast {
   id: number;
   text: string;
   kind: 'info' | 'error';
 }
 
-function termOptions(a: Appearance): TermOptions {
-  const theme = getScheme(a.scheme).theme;
-  // With a background picture the terminal canvas is transparent.
-  return { fontSize: a.fontSize, theme: a.background === 'none' ? theme : { ...theme, background: 'rgba(0,0,0,0)' } };
-}
+const EMPTY_GROUP: GroupConfig = { path: '', identityId: '', jumpHostId: '', startupCommand: '', envVars: [], proxy: null, agentForwarding: false, scheme: '' };
+const MAX_PANES = 16;
 
 function legacyFontSize(): number {
   try {
@@ -63,22 +96,36 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 const newKey = () => crypto.randomUUID();
+const isTerminal = (t: PaneTarget) => t.kind === 'ssh' || t.kind === 'local';
 
 export default function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [groups, setGroups] = useState<GroupConfig[]>([]);
+  const [identities, setIdentities] = useState<Identity[]>([]);
+  const [keys, setKeys] = useState<KeyItem[]>([]);
+  const [tunnels, setTunnels] = useState<Tunnel[]>([]);
+  const [tunnelStatus, setTunnelStatus] = useState<Record<string, TunnelStatus>>({});
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [shells, setShells] = useState<LocalShell[]>([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [panes, setPanes] = useState<Record<string, Pane>>({});
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>('hosts');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [editingHost, setEditingHost] = useState<Host | null | undefined>(undefined);
+
+  const [editingHost, setEditingHost] = useState<{ host: Host | null; group?: string } | null>(null);
+  const [editingGroup, setEditingGroup] = useState<{ group: GroupConfig; isNew: boolean } | null>(null);
+  const [editingIdentity, setEditingIdentity] = useState<Identity | null | undefined>(undefined);
+  const [keyDialog, setKeyDialog] = useState<'generate' | 'import' | KeyItem | null>(null);
+  const [editingTunnel, setEditingTunnel] = useState<Tunnel | null | undefined>(undefined);
+  const [pickHosts, setPickHosts] = useState<Snippet | null>(null);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [prompt, setPrompt] = useState<PromptRequest | null>(null);
   const [auth, setAuth] = useState<AuthRequest | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [varsRequest, setVarsRequest] = useState<{ snippet: Snippet; execute: boolean } | null>(null);
+  const [varsRequest, setVarsRequest] = useState<{ snippet: Snippet; execute: boolean; hostIds?: string[] } | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [appearance, setAppearance] = useState<Appearance>(DEFAULT_APPEARANCE);
@@ -93,6 +140,8 @@ export default function App() {
   tabsRef.current = tabs;
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
   const shellsRef = useRef(shells);
   shellsRef.current = shells;
   const appearanceRef = useRef(appearance);
@@ -105,9 +154,15 @@ export default function App() {
   const activeSession = activeTab ? sessions.current.get(activeTab.activePane) : undefined;
   const activePaneCount = activeTab ? leaves(activeTab.layout).length : 0;
   const overlayOpen = !!(
-    editingHost !== undefined ||
+    editingHost ||
+    editingGroup ||
+    editingIdentity !== undefined ||
+    keyDialog ||
+    editingTunnel !== undefined ||
+    pickHosts ||
     editingSnippet !== undefined ||
     confirm ||
+    prompt ||
     auth ||
     paletteOpen ||
     varsRequest ||
@@ -120,20 +175,44 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = window.setTimeout(() => setToast(null), toast.kind === 'error' ? 6000 : 3000);
+    const t = window.setTimeout(() => setToast(null), toast.kind === 'error' ? 6000 : 3200);
     return () => window.clearTimeout(t);
   }, [toast]);
 
   const refresh = useCallback(async () => {
-    const [h, s] = await Promise.all([api.listHosts(), api.listSnippets()]);
+    const [h, s, g, i, k, t, w] = await Promise.all([
+      api.listHosts(),
+      api.listSnippets(),
+      api.listGroups(),
+      api.listIdentities(),
+      api.listKeys(),
+      api.listTunnels(),
+      api.listWorkspaces(),
+    ]);
     setHosts(h);
     setSnippets(s);
+    setGroups(g);
+    setIdentities(i);
+    setKeys(k);
+    setTunnels(t);
+    setWorkspaces(w);
   }, []);
 
   useEffect(() => {
     refresh().catch((e) => notify(errorMessage(e), 'error'));
     api.listShells().then(setShells).catch(() => {});
     history.load().catch(() => {});
+    api
+      .tunnelStatuses()
+      .then((list) => setTunnelStatus(Object.fromEntries(list.map((s) => [s.id, s]))))
+      .catch(() => {});
+    const offTunnel = events.tunnelStatus((s) => setTunnelStatus((m) => ({ ...m, [s.id]: s })));
+    const offEdited = events.fsEdited((_fs, path, error) =>
+      error ? notify(`Upload of ${path} failed: ${error}`, 'error') : notify(`Saved ${path.split('/').pop()} to the server`),
+    );
+    const offTransfer = events.transfer((p) => {
+      if (p.state === 'error') notify(`Transfer failed: ${p.error}`, 'error');
+    });
     api
       .getSettings()
       .then((raw) => {
@@ -143,22 +222,39 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setSettingsLoaded(true));
+    return () => {
+      offTunnel();
+      offEdited();
+      offTransfer();
+    };
   }, [refresh, notify]);
 
-  // Apply appearance to every terminal and the chrome; persist (debounced).
+  // ---- appearance (per-host color schemes included) ----
+
+  const optionsFor = useCallback((target: PaneTarget, a: Appearance): TermOptions => {
+    let scheme = a.scheme;
+    if (target.kind === 'ssh' && target.hostId) {
+      const h = hostsRef.current.find((x) => x.id === target.hostId);
+      if (h) scheme = inherited(h, groupsRef.current, 'scheme') || scheme;
+    }
+    const theme = getScheme(scheme).theme;
+    // With a background picture the terminal canvas is transparent.
+    return { fontSize: a.fontSize, theme: a.background === 'none' ? theme : { ...theme, background: 'rgba(0,0,0,0)' } };
+  }, []);
+
   useEffect(() => {
-    const opts = termOptions(appearance);
-    sessions.current.forEach((s) => s.setOptions(opts));
+    sessions.current.forEach((s) => s.setOptions(optionsFor(s.currentTarget, appearance)));
     document.documentElement.style.setProperty('--term-bg', getScheme(appearance.scheme).theme.background);
     if (!settingsLoaded) return;
     const t = window.setTimeout(() => {
       api.saveSettings(JSON.stringify({ appearance, typing })).catch((e) => notify(errorMessage(e), 'error'));
     }, 400);
     return () => window.clearTimeout(t);
-  }, [appearance, typing, settingsLoaded, notify]);
+  }, [appearance, typing, settingsLoaded, notify, optionsFor, hosts, groups]);
 
   useEffect(() => {
     Object.assign(typingPrefs, typing);
+    void api.setLogging(typing.recordLogs).catch(() => {});
   }, [typing]);
 
   // ---- panes & tabs ----
@@ -178,19 +274,26 @@ export default function App() {
     if (activeKeyRef.current !== tab.key) setActiveKey(tab.key);
   }, []);
 
+  /** Ask for a password/passphrase; resolves null when cancelled. */
+  const askAuth = useCallback(
+    (target: string, error: string, kind: AuthKind = 'password') =>
+      new Promise<{ password: string; save: boolean } | null>((resolve) => setAuth({ kind, target, error, canSave: true, resolve })),
+    [],
+  );
+
   const describe = (target: PaneTarget): Pick<Pane, 'title' | 'subtitle' | 'env'> => {
     if (target.kind === 'local') {
       const sh = shellsRef.current.find((s) => s.id === target.shellId);
       const name = sh?.name ?? target.shellId;
       const folder = target.cwd?.split(/[\\/]/).filter(Boolean).pop();
-      return folder
-        ? { title: folder, subtitle: `${name} — ${target.cwd}`, env: '' }
-        : { title: name, subtitle: `${name} (local)`, env: '' };
+      return folder ? { title: folder, subtitle: `${name} — ${target.cwd}`, env: '' } : { title: name, subtitle: `${name} (local)`, env: '' };
     }
+    if (target.kind === 'log') return { title: `Log · ${target.title}`, subtitle: `Session log — ${target.title}`, env: '' };
     const host = target.hostId ? hostsRef.current.find((h) => h.id === target.hostId) : undefined;
-    return host
-      ? { title: host.name, subtitle: hostLabel(host), env: host.env }
-      : { title: target.spec ?? '', subtitle: target.spec ?? '', env: '' };
+    if (target.kind === 'sftp') {
+      return { title: `SFTP · ${host?.name ?? 'host'}`, subtitle: `SFTP — ${host ? hostLabel(host) : ''}`, env: host?.env ?? '' };
+    }
+    return host ? { title: host.name, subtitle: hostLabel(host), env: host.env } : { title: target.spec ?? '', subtitle: target.spec ?? '', env: '' };
   };
 
   // Actions used by session callbacks; reassigned each render so they see fresh state.
@@ -202,43 +305,51 @@ export default function App() {
   const createPane = (target: PaneTarget): string => {
     const key = newKey();
     const info = describe(target);
-    const session = new TermSession(
-      target,
-      {
-        status: (status, extra) => patchPane(key, { status, ...extra }),
-        dims: (cols, rows) => patchPane(key, { cols, rows }),
-        auth: (kind, error) =>
-          new Promise((resolve) => {
+    if (isTerminal(target)) {
+      const session = new TermSession(
+        target,
+        {
+          status: (status, extra) => patchPane(key, { status, ...extra }),
+          dims: (cols, rows) => patchPane(key, { cols, rows }),
+          auth: (kind, error) => {
             focusPane(key);
-            setAuth({ kind, target: info.subtitle, error, canSave: true, resolve });
-          }),
-        linked: ({ hostId, saved }) => {
-          if (hostId) patchPane(key, { target: { kind: 'ssh', hostId } });
-          if (saved) notify(`Saved ${info.subtitle} to your hosts`);
-          void refresh(); // new host, saved password, last-used time
+            return askAuth(info.subtitle, error, kind);
+          },
+          linked: ({ hostId, saved }) => {
+            if (hostId) patchPane(key, { target: { kind: 'ssh', hostId } });
+            if (saved) notify(`Saved ${info.subtitle} to your hosts`);
+            void refresh(); // new host, saved password, last-used time
+          },
+          exited: () => actions.current.closePane(key),
+          input: (d) => actions.current.broadcast(key, d),
+          focused: () => focusPane(key),
+          historyList: (query, anchor) => setHistoryList({ paneKey: key, query, anchor }),
+          output: () => patchPane(key, { unread: true }),
         },
-        exited: () => actions.current.closePane(key),
-        input: (d) => actions.current.broadcast(key, d),
-        focused: () => focusPane(key),
-        historyList: (query, anchor) => setHistoryList({ paneKey: key, query, anchor }),
-      },
-      termOptions(appearanceRef.current),
-    );
-    sessions.current.set(key, session);
-    setPanes((prev) => ({ ...prev, [key]: { key, target, ...info, status: 'connecting' } }));
+        optionsFor(target, appearanceRef.current),
+      );
+      sessions.current.set(key, session);
+    }
+    setPanes((prev) => ({ ...prev, [key]: { key, target, ...info, status: isTerminal(target) ? 'connecting' : 'connected' } }));
     return key;
   };
 
-  const openTab = (target: PaneTarget) => {
-    const paneKey = createPane(target);
-    const tab: Tab = { key: newKey(), layout: { type: 'pane', key: paneKey }, activePane: paneKey, zoomed: false, broadcast: false };
+  const addTab = (layoutKeys: string[], broadcast = false) => {
+    const tab: Tab = {
+      key: newKey(),
+      layout: layoutKeys.length === 1 ? { type: 'pane', key: layoutKeys[0] } : gridLayout(layoutKeys, newKey),
+      activePane: layoutKeys[0],
+      zoomed: false,
+      broadcast: broadcast && layoutKeys.length > 1,
+    };
     setTabs((prev) => [...prev, tab]);
     setActiveKey(tab.key);
     setFindOpen(false);
   };
 
-  const defaultShell = () =>
-    shellsRef.current.find((s) => s.id === typingPrefs.defaultShell)?.id ?? shellsRef.current[0]?.id;
+  const openTab = (target: PaneTarget) => addTab([createPane(target)]);
+
+  const defaultShell = () => shellsRef.current.find((s) => s.id === typingPrefs.defaultShell)?.id ?? shellsRef.current[0]?.id;
 
   const openLocal = (shellId = defaultShell(), cwd?: string) => {
     if (!shellId) {
@@ -272,8 +383,12 @@ export default function App() {
       else openLocal();
       return;
     }
+    if (leaves(tab.layout).length >= MAX_PANES) {
+      notify(`A tab holds up to ${MAX_PANES} panes`, 'error');
+      return;
+    }
     const from = tab.activePane;
-    const t = target ?? sessions.current.get(from)?.currentTarget;
+    const t = target ?? sessions.current.get(from)?.currentTarget ?? panes[from]?.target;
     if (!t) return;
     let d = dir;
     if (d === 'auto') {
@@ -320,14 +435,11 @@ export default function App() {
     const nextActive =
       tab.activePane !== paneKey
         ? tab.activePane
-        : (['left', 'up', 'right', 'down'] as Direction[]).map((d) => neighbor(tab.layout, paneKey, d)).find(Boolean) ??
-          leaves(layout)[0];
+        : (['left', 'up', 'right', 'down'] as Direction[]).map((d) => neighbor(tab.layout, paneKey, d)).find(Boolean) ?? leaves(layout)[0];
     disposePanes([paneKey]);
     setTabs((prev) =>
       prev.map((t) =>
-        t.key === tab.key
-          ? { ...t, layout, activePane: nextActive!, zoomed: false, broadcast: t.broadcast && leaves(layout).length > 1 }
-          : t,
+        t.key === tab.key ? { ...t, layout, activePane: nextActive!, zoomed: false, broadcast: t.broadcast && leaves(layout).length > 1 } : t,
       ),
     );
     setFindOpen(false);
@@ -341,6 +453,18 @@ export default function App() {
   };
 
   actions.current = { closePane, broadcast };
+
+  // Panes the user can see get no "unread" dot; others report new output.
+  useEffect(() => {
+    const visible = new Set<string>();
+    for (const t of tabs) {
+      if (t.key !== activeKey) continue;
+      for (const k of leaves(t.layout)) if (!t.zoomed || k === t.activePane) visible.add(k);
+    }
+    sessions.current.forEach((s, k) => s.setWatching(visible.has(k)));
+    const stale = [...visible].filter((k) => panes[k]?.unread);
+    if (stale.length) setPanes((prev) => Object.fromEntries(Object.entries(prev).map(([k, p]) => [k, visible.has(k) ? { ...p, unread: false } : p])));
+  }, [tabs, activeKey, panes]);
 
   const patchActiveTab = (fn: (t: Tab) => Partial<Tab>) => {
     if (!activeKey) return;
@@ -367,25 +491,44 @@ export default function App() {
     setActiveKey(tabs[(idx + dir + tabs.length) % tabs.length].key);
   };
 
+  /** Opens every host (up to 16) side by side in one tab. */
+  const connectHosts = (list: Host[], runText?: string) => {
+    if (!list.length) return;
+    if (list.length > MAX_PANES) notify(`Opening the first ${MAX_PANES} of ${list.length} hosts`);
+    const keysList = list.slice(0, MAX_PANES).map((h) => createPane({ kind: 'ssh', hostId: h.id }));
+    if (runText) keysList.forEach((k) => sessions.current.get(k)?.runWhenConnected(runText));
+    addTab(keysList, list.length > 1);
+  };
+
   // ---- snippets ----
 
   const runSnippet = (s: Snippet, execute: boolean) => {
     if (!activeSession) {
-      notify('Open a connection first');
+      notify('Open a terminal first — or use "Run on several hosts"');
       return;
     }
     if (snippetVars(s.command).length) setVarsRequest({ snippet: s, execute });
     else sendCommand(s.command, execute);
   };
 
+  const snippetText = (command: string, execute: boolean) => command.replace(/\r?\n/g, '\r') + (execute ? '\r' : '');
+
   /** Sends to the active pane, or to every pane when broadcast is on. */
   const sendCommand = (command: string, execute: boolean) => {
     if (!activeTab || !activeSession) return;
-    const text = command.replace(/\r?\n/g, '\r') + (execute ? '\r' : '');
+    const text = snippetText(command, execute);
     const targets = activeTab.broadcast ? leaves(activeTab.layout) : [activeTab.activePane];
     const sent = targets.map((k) => sessions.current.get(k)?.send(text)).filter(Boolean).length;
     if (!sent) notify('This session is not connected', 'error');
     activeSession.focus();
+  };
+
+  const runOnHosts = (s: Snippet, hostIds: string[], command = s.command) => {
+    connectHosts(
+      hostIds.map((id) => hosts.find((h) => h.id === id)).filter(Boolean) as Host[],
+      snippetText(command, true),
+    );
+    notify(`Running "${s.name}" on ${hostIds.length} host${hostIds.length === 1 ? '' : 's'} (broadcast is on in that tab)`);
   };
 
   /** Readable name for a history host key. */
@@ -396,12 +539,12 @@ export default function App() {
     return id;
   };
 
-  // ---- hosts ----
+  // ---- hosts, groups, imports ----
 
-  const importConfig = async () => {
+  const runImport = async (fn: () => Promise<number>, what: string) => {
     try {
-      const n = await api.importSSHConfig();
-      notify(n ? `Imported ${n} host${n === 1 ? '' : 's'} from ~/.ssh/config` : 'No new hosts found in ~/.ssh/config');
+      const n = await fn();
+      notify(n ? `Imported ${n} host${n === 1 ? '' : 's'} from ${what}` : `No new hosts found in ${what}`);
       if (n) {
         setPanel('hosts');
         await refresh();
@@ -411,11 +554,11 @@ export default function App() {
     }
   };
 
-  const saveHost = async (h: Host, secret: string, forget: boolean, connect: boolean) => {
+  const saveHost = async (h: Host, secret: string, proxyPassword: string, forget: boolean, connect: boolean) => {
     if (forget && h.id) await api.clearSecret(h.id);
-    const saved = await api.saveHost(h, secret);
+    const saved = await api.saveHost(h, secret, proxyPassword);
     await refresh();
-    setEditingHost(undefined);
+    setEditingHost(null);
     if (connect) openTab({ kind: 'ssh', hostId: saved.id });
   };
 
@@ -447,8 +590,113 @@ export default function App() {
       },
     });
 
-  const changeFont = (delta: number) =>
-    setAppearance((a) => ({ ...a, fontSize: Math.max(9, Math.min(32, a.fontSize + delta)) }));
+  const openGroupDialog = (path: string | null) => {
+    if (path === null || path.endsWith('/')) {
+      setEditingGroup({ group: { ...EMPTY_GROUP, path: path ?? '' }, isNew: true });
+      return;
+    }
+    const existing = groups.find((g) => g.path === path);
+    setEditingGroup({ group: existing ?? { ...EMPTY_GROUP, path }, isNew: false });
+  };
+
+  // ---- tunnels ----
+
+  const toggleTunnel = async (t: Tunnel) => {
+    const st = tunnelStatus[t.id]?.state;
+    if (st === 'running' || st === 'starting') {
+      await api.stopTunnel(t.id);
+      return;
+    }
+    let password = '';
+    for (;;) {
+      try {
+        await api.startTunnel(t.id, password);
+        notify(`${t.label} is running`);
+        return;
+      } catch (e) {
+        const msg = errorMessage(e);
+        if (!msg.startsWith('AUTH_FAILED')) {
+          notify(cleanError(msg), 'error');
+          return;
+        }
+        const h = hosts.find((x) => x.id === t.hostId);
+        const res = await askAuth(h ? hostLabel(h) : 'SSH host', password ? cleanError(msg) : '');
+        if (!res) return;
+        password = res.password;
+        if (res.save && h) await api.saveHost(h, res.password).then(refresh).catch(() => {});
+      }
+    }
+  };
+
+  // ---- workspaces ----
+
+  const saveWorkspace = () => {
+    if (!activeTab) return;
+    const targets: Record<string, PaneTarget> = {};
+    for (const k of leaves(activeTab.layout)) {
+      const t = sessions.current.get(k)?.currentTarget ?? panes[k]?.target;
+      if (t && t.kind !== 'log') targets[k] = t;
+    }
+    if (!Object.keys(targets).length) {
+      notify('Nothing to save in this tab', 'error');
+      return;
+    }
+    let layout = activeTab.layout;
+    for (const k of leaves(layout)) if (!targets[k]) layout = removePane(layout, k) ?? layout;
+    setPrompt({
+      title: 'Save workspace',
+      label: 'Name',
+      initial: activePane?.title ?? '',
+      placeholder: 'Prod: API + DB + logs',
+      confirmLabel: 'Save',
+      run: async (name) => {
+        const existing = workspaces.find((w) => w.name.toLowerCase() === name.trim().toLowerCase());
+        await api.saveWorkspace({ id: existing?.id ?? '', name, data: { layout, targets, activePane: activeTab.activePane, broadcast: activeTab.broadcast } });
+        await refresh();
+        setPrompt(null);
+        notify(existing ? `Updated workspace "${name}"` : `Saved workspace "${name}"`);
+      },
+    });
+  };
+
+  const openWorkspace = (w: Workspace) => {
+    const d = w.data;
+    const map: Record<string, string> = {};
+    for (const [oldKey, target] of Object.entries(d.targets)) map[oldKey] = createPane(target);
+    const tab: Tab = {
+      key: newKey(),
+      layout: remapLayout(d.layout, map, newKey),
+      activePane: map[d.activePane] ?? Object.values(map)[0],
+      zoomed: false,
+      broadcast: d.broadcast,
+    };
+    setTabs((prev) => [...prev, tab]);
+    setActiveKey(tab.key);
+  };
+
+  // ---- files dropped from Explorer ----
+
+  useEffect(
+    () =>
+      events.fileDrop((x, y, paths) => {
+        const el = document.elementFromPoint(x, y) as HTMLElement | null;
+        const panelEl = el?.closest<HTMLElement>('[data-fs-panel]');
+        if (panelEl) {
+          const fsId = panelEl.dataset.fsPanel;
+          const dir = panelEl.dataset.fsPath;
+          if (fsId && dir) {
+            void transfers.start('local', paths, fsId, dir).catch((e) => notify(cleanError(errorMessage(e)), 'error'));
+          } else notify('Open a folder in that pane first', 'error');
+          return;
+        }
+        const paneKey = el?.closest<HTMLElement>('[data-pane-key]')?.dataset.paneKey;
+        const s = paneKey ? sessions.current.get(paneKey) : activeSession;
+        if (s) s.send(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
+      }),
+    [activeSession, notify],
+  );
+
+  const changeFont = (delta: number) => setAppearance((a) => ({ ...a, fontSize: Math.max(9, Math.min(32, a.fontSize + delta)) }));
 
   // ---- global shortcuts (capture phase, so they win over the terminal) ----
 
@@ -463,11 +711,12 @@ export default function App() {
       else if (ctrl && e.shiftKey && k === 't') setPaletteOpen(true);
       else if (ctrl && e.shiftKey && e.code === 'Backquote') openLocal();
       else if (ctrl && e.shiftKey && k === 'w') activePane && closePane(activePane.key);
-      else if (ctrl && e.shiftKey && k === 'f') activeKey && setFindOpen(true);
+      else if (ctrl && e.shiftKey && k === 'f') activeSession && setFindOpen(true);
       else if (ctrl && e.shiftKey && k === 'r') activeSession?.reconnect();
       else if (ctrl && e.shiftKey && k === 'b') setSidebarOpen((v) => !v);
       else if (ctrl && e.shiftKey && k === 'z') toggleZoom();
       else if (ctrl && e.shiftKey && k === 'a') toggleBroadcast();
+      else if (ctrl && !e.shiftKey && k === 's' && activeTab) saveWorkspace();
       else if (ctrl && !e.shiftKey && e.key === ',') setAppearanceOpen((v) => !v);
       else if (altShift && (e.code === 'Equal' || e.code === 'NumpadAdd')) split('row');
       else if (altShift && (e.code === 'Minus' || e.code === 'NumpadSubtract')) split('col');
@@ -501,17 +750,22 @@ export default function App() {
       label: h.name,
       detail: hostLabel(h),
       env: h.env,
+      keywords: `${h.group} ${(h.tags ?? []).join(' ')}`,
       run: (o) => (o?.split ? split('auto', sshTarget(h)) : openTab(sshTarget(h))),
     }));
+    for (const h of hosts.filter((x) => (x.protocol || 'ssh') === 'ssh')) {
+      items.push({ id: 'f:' + h.id, kind: 'Connect', label: `SFTP: ${h.name}`, detail: 'Files', env: h.env, run: () => openTab({ kind: 'sftp', hostId: h.id }) });
+    }
     for (const s of shells) {
       const target: PaneTarget = { kind: 'local', shellId: s.id };
-      items.push({
-        id: 'l:' + s.id,
-        kind: 'Local',
-        label: s.name,
-        detail: 'Local terminal',
-        run: (o) => (o?.split ? split('auto', target) : openTab(target)),
-      });
+      items.push({ id: 'l:' + s.id, kind: 'Local', label: s.name, detail: 'Local terminal', run: (o) => (o?.split ? split('auto', target) : openTab(target)) });
+    }
+    for (const w of workspaces) {
+      items.push({ id: 'w:' + w.id, kind: 'Action', label: `Open workspace: ${w.name}`, run: () => openWorkspace(w) });
+    }
+    for (const t of tunnels) {
+      const on = tunnelStatus[t.id]?.state === 'running';
+      items.push({ id: 't:' + t.id, kind: 'Action', label: `${on ? 'Stop' : 'Start'} port forwarding: ${t.label}`, run: () => void toggleTunnel(t) });
     }
     if (activeSession) {
       for (const s of snippets) {
@@ -529,92 +783,153 @@ export default function App() {
       items.push(
         { id: 'a:split-r', kind: 'Action', label: 'Split right', detail: 'Alt+Shift+=', run: () => split('row') },
         { id: 'a:split-d', kind: 'Action', label: 'Split down', detail: 'Alt+Shift+-', run: () => split('col') },
+        { id: 'a:save-ws', kind: 'Action', label: 'Save tab as workspace…', detail: 'Ctrl+S', run: saveWorkspace },
       );
       if (activePaneCount > 1) {
         items.push(
           { id: 'a:zoom', kind: 'Action', label: activeTab.zoomed ? 'Unzoom pane' : 'Zoom pane', detail: 'Ctrl+Shift+Z', run: toggleZoom },
-          {
-            id: 'a:broadcast',
-            kind: 'Action',
-            label: activeTab.broadcast ? 'Stop broadcasting input' : 'Broadcast input to all panes',
-            detail: 'Ctrl+Shift+A',
-            run: toggleBroadcast,
-          },
+          { id: 'a:broadcast', kind: 'Action', label: activeTab.broadcast ? 'Stop broadcasting input' : 'Broadcast input to all panes', detail: 'Ctrl+Shift+A', run: toggleBroadcast },
         );
       }
-      items.push(
-        { id: 'a:reconnect', kind: 'Action', label: 'Reconnect current pane', detail: 'Ctrl+Shift+R', run: () => activeSession?.reconnect() },
-        { id: 'a:find', kind: 'Action', label: 'Find in terminal', detail: 'Ctrl+Shift+F', run: () => setFindOpen(true) },
-        { id: 'a:close', kind: 'Action', label: 'Close current pane', detail: 'Ctrl+Shift+W', run: () => activePane && closePane(activePane.key) },
-      );
+      if (activeSession) {
+        items.push(
+          { id: 'a:reconnect', kind: 'Action', label: 'Reconnect current pane', detail: 'Ctrl+Shift+R', run: () => activeSession.reconnect() },
+          { id: 'a:find', kind: 'Action', label: 'Find in terminal', detail: 'Ctrl+Shift+F', run: () => setFindOpen(true) },
+        );
+      }
+      items.push({ id: 'a:close', kind: 'Action', label: 'Close current pane', detail: 'Ctrl+Shift+W', run: () => activePane && closePane(activePane.key) });
     }
     items.push(
-      { id: 'a:appearance', kind: 'Action', label: 'Appearance: background, colors, font…', detail: 'Ctrl+,', run: () => setAppearanceOpen(true) },
-      { id: 'a:new-host', kind: 'Action', label: 'New host…', run: () => setEditingHost(null) },
-      { id: 'a:import', kind: 'Action', label: 'Import hosts from ~/.ssh/config', run: () => void importConfig() },
+      { id: 'a:appearance', kind: 'Action', label: 'Settings: background, colors, font, typing…', detail: 'Ctrl+,', run: () => setAppearanceOpen(true) },
+      { id: 'a:new-host', kind: 'Action', label: 'New host…', run: () => setEditingHost({ host: null }) },
+      { id: 'a:new-group', kind: 'Action', label: 'New group…', run: () => openGroupDialog(null) },
+      { id: 'a:gen-key', kind: 'Action', label: 'Generate SSH key…', run: () => setKeyDialog('generate') },
+      { id: 'a:new-tunnel', kind: 'Action', label: 'New port forwarding…', run: () => setEditingTunnel(null) },
+      { id: 'a:import', kind: 'Action', label: 'Import hosts from ~/.ssh/config', run: () => void runImport(api.importSSHConfig, '~/.ssh/config') },
+      { id: 'a:import-putty', kind: 'Action', label: 'Import PuTTY sessions', run: () => void runImport(api.importPuTTY, 'PuTTY') },
       { id: 'a:new-snippet', kind: 'Action', label: 'New snippet…', run: () => setEditingSnippet(null) },
       { id: 'a:sidebar', kind: 'Action', label: 'Toggle sidebar', detail: 'Ctrl+Shift+B', run: () => setSidebarOpen((v) => !v) },
     );
     return items;
   })();
 
+  // ---- sidebar context ----
+
+  const ctx: SidebarCtx = {
+    hosts,
+    groups,
+    snippets,
+    identities,
+    keys,
+    tunnels,
+    tunnelStatus,
+    workspaces,
+    hasSession: !!activeSession,
+    canSaveWorkspace: !!activeTab,
+    connect: (h, inSplit) => (inSplit ? split('auto', { kind: 'ssh', hostId: h.id }) : openTab({ kind: 'ssh', hostId: h.id })),
+    openSftp: (h) => openTab({ kind: 'sftp', hostId: h.id }),
+    editHost: (h, group) => setEditingHost({ host: h, group }),
+    duplicateHost: (h) => setEditingHost({ host: { ...h, id: '', name: `${h.name} (copy)`, hasSecret: false, lastUsed: 0 } }),
+    deleteHost: askDeleteHost,
+    editGroup: openGroupDialog,
+    connectGroup: (path) => connectHosts(hostsInGroup(hosts, path)),
+    importSSHConfig: () => void runImport(api.importSSHConfig, '~/.ssh/config'),
+    importPuTTY: () => void runImport(api.importPuTTY, 'PuTTY'),
+    runSnippet,
+    runSnippetOnHosts: (s) => setPickHosts(s),
+    editSnippet: setEditingSnippet,
+    deleteSnippet: askDeleteSnippet,
+    runHistory: (command, execute) => (activeSession ? sendCommand(command, execute) : notify('Open a terminal first')),
+    clearHistory: () =>
+      setConfirm({
+        title: 'Clear command history',
+        message: 'Forget every remembered command on all servers? Shell history on the servers themselves is not touched.',
+        confirmLabel: 'Clear history',
+        run: () => history.clear(),
+      }),
+    historyHostLabel,
+    generateKey: () => setKeyDialog('generate'),
+    importKey: () => setKeyDialog('import'),
+    openKey: (k) => setKeyDialog(k),
+    editIdentity: setEditingIdentity,
+    editTunnel: setEditingTunnel,
+    toggleTunnel: (t) => void toggleTunnel(t),
+    deleteTunnel: (t) =>
+      setConfirm({
+        title: 'Delete port forwarding',
+        message: `Delete "${t.label}"? It is stopped first if it is running.`,
+        confirmLabel: 'Delete',
+        run: async () => {
+          await api.deleteTunnel(t.id);
+          await refresh();
+        },
+      }),
+    saveWorkspace,
+    openWorkspace,
+    renameWorkspace: (w) =>
+      setPrompt({
+        title: 'Rename workspace',
+        label: 'Name',
+        initial: w.name,
+        confirmLabel: 'Rename',
+        run: async (name) => {
+          await api.saveWorkspace({ ...w, name });
+          await refresh();
+          setPrompt(null);
+        },
+      }),
+    deleteWorkspace: (w) =>
+      setConfirm({
+        title: 'Delete workspace',
+        message: `Delete the saved workspace "${w.name}"? Open tabs are not affected.`,
+        confirmLabel: 'Delete',
+        run: async () => {
+          await api.deleteWorkspace(w.id);
+          await refresh();
+        },
+      }),
+    openLog: (logId, title) => openTab({ kind: 'log', logId, title }),
+    notify,
+  };
+
   // ---- render ----
 
   const tabViews: TabView[] = useMemo(
     () =>
       tabs.map((t) => {
-        const keys = leaves(t.layout);
+        const keysList = leaves(t.layout);
         const p = panes[t.activePane];
-        const anyProd = keys.some((k) => panes[k]?.env === 'prod');
+        const anyProd = keysList.some((k) => panes[k]?.env === 'prod');
         return {
           key: t.key,
           title: p?.title ?? '…',
-          subtitle: keys.map((k) => panes[k]?.subtitle).filter(Boolean).join('  |  '),
+          subtitle: keysList.map((k) => panes[k]?.subtitle).filter(Boolean).join('  |  '),
           env: anyProd ? 'prod' : (p?.env ?? ''),
           status: p?.status ?? 'connecting',
-          paneCount: keys.length,
-          broadcast: t.broadcast && keys.length > 1,
+          paneCount: keysList.length,
+          broadcast: t.broadcast && keysList.length > 1,
           local: p?.target.kind === 'local',
+          kind: p?.target.kind ?? 'ssh',
+          unread: t.key !== activeKey && keysList.some((k) => panes[k]?.unread),
         };
       }),
-    [tabs, panes],
+    [tabs, panes, activeKey],
   );
 
   const bgCss = backgroundCss(appearance);
   const schemeBg = getScheme(appearance.scheme).theme.background;
   const prodVisible = activeTab && leaves(activeTab.layout).some((k) => panes[k]?.env === 'prod');
 
+  const renderPane = (pane: Pane) => {
+    const t = pane.target;
+    if (t.kind === 'sftp') return <SftpView hostId={t.hostId} hosts={hosts} auth={(target, error) => askAuth(target, error)} notify={notify} />;
+    if (t.kind === 'log') return <LogView logId={t.logId} theme={getScheme(appearance.scheme).theme} fontSize={appearance.fontSize} notify={notify} />;
+    return null;
+  };
+
   return (
     <div className="app">
-      {sidebarOpen && (
-        <Sidebar
-          hosts={hosts}
-          snippets={snippets}
-          panel={panel}
-          onPanel={setPanel}
-          hasSession={!!activeSession}
-          onConnect={(h) => openTab({ kind: 'ssh', hostId: h.id })}
-          onEditHost={setEditingHost}
-          onDeleteHost={askDeleteHost}
-          onImport={() => void importConfig()}
-          onRunSnippet={runSnippet}
-          onEditSnippet={setEditingSnippet}
-          onDeleteSnippet={askDeleteSnippet}
-          historyHostLabel={historyHostLabel}
-          onRunHistory={(command, execute) => {
-            if (activeSession) sendCommand(command, execute);
-            else notify('Open a terminal first');
-          }}
-          onClearHistory={() =>
-            setConfirm({
-              title: 'Clear command history',
-              message: 'Forget every remembered command on all servers? Shell history on the servers themselves is not touched.',
-              confirmLabel: 'Clear history',
-              run: () => history.clear(),
-            })
-          }
-        />
-      )}
+      {sidebarOpen && <Sidebar ctx={ctx} panel={panel} onPanel={setPanel} />}
 
       <main className="main">
         <TabBar
@@ -638,10 +953,7 @@ export default function App() {
         <div className={`term-area ${prodVisible ? 'prod' : ''} ${bgCss ? 'has-bg' : ''}`}>
           {bgCss && tabs.length > 0 && (
             <>
-              <div
-                className="term-bg"
-                style={{ background: bgCss, filter: appearance.blur ? `blur(${appearance.blur}px)` : undefined }}
-              />
+              <div className="term-bg" style={{ background: bgCss, filter: appearance.blur ? `blur(${appearance.blur}px)` : undefined }} />
               <div className="term-bg-dim" style={{ background: hexToRgba(schemeBg, appearance.dim / 100) }} />
             </>
           )}
@@ -653,10 +965,9 @@ export default function App() {
               panes={panes}
               sessions={sessions.current}
               onActivate={focusPane}
-              onRatio={(splitKey, ratio) =>
-                setTabs((prev) => prev.map((x) => (x.key === t.key ? { ...x, layout: setRatio(x.layout, splitKey, ratio) } : x)))
-              }
+              onRatio={(splitKey, ratio) => setTabs((prev) => prev.map((x) => (x.key === t.key ? { ...x, layout: setRatio(x.layout, splitKey, ratio) } : x)))}
               onClosePane={closePane}
+              renderPane={renderPane}
             />
           ))}
           {tabs.length === 0 && (
@@ -666,13 +977,11 @@ export default function App() {
               onLocal={(id) => openLocal(id)}
               onConnect={(h) => openTab({ kind: 'ssh', hostId: h.id })}
               onQuickConnect={(spec) => openTab({ kind: 'ssh', spec })}
-              onNewHost={() => setEditingHost(null)}
-              onImport={() => void importConfig()}
+              onNewHost={() => setEditingHost({ host: null })}
+              onImport={() => void runImport(api.importSSHConfig, '~/.ssh/config')}
             />
           )}
-          {findOpen && activeSession && (
-            <FindBar key={activePane?.key} session={activeSession} onClose={() => setFindOpen(false)} />
-          )}
+          {findOpen && activeSession && <FindBar key={activePane?.key} session={activeSession} onClose={() => setFindOpen(false)} />}
         </div>
         <StatusBar
           pane={activePane}
@@ -685,14 +994,7 @@ export default function App() {
       </main>
 
       {appearanceOpen && (
-        <AppearancePanel
-          value={appearance}
-          onChange={setAppearance}
-          typing={typing}
-          onTyping={setTyping}
-          shells={shells}
-          onClose={() => setAppearanceOpen(false)}
-        />
+        <AppearancePanel value={appearance} onChange={setAppearance} typing={typing} onTyping={setTyping} shells={shells} onClose={() => setAppearanceOpen(false)} />
       )}
       {historyList && sessions.current.get(historyList.paneKey) && (
         <HistoryList
@@ -713,14 +1015,135 @@ export default function App() {
       {paletteOpen && (
         <CommandPalette
           items={paletteItems}
-          onQuickConnect={(spec, inSplit) =>
-            inSplit ? split('auto', { kind: 'ssh', spec }) : openTab({ kind: 'ssh', spec })
-          }
+          onQuickConnect={(spec, inSplit) => (inSplit ? split('auto', { kind: 'ssh', spec }) : openTab({ kind: 'ssh', spec }))}
           onClose={() => setPaletteOpen(false)}
         />
       )}
-      {editingHost !== undefined && (
-        <HostDialog host={editingHost} hosts={hosts} onSave={saveHost} onClose={() => setEditingHost(undefined)} />
+      {editingHost && (
+        <HostDialog
+          host={editingHost.host}
+          defaultGroup={editingHost.group}
+          hosts={hosts}
+          groups={groups}
+          identities={identities}
+          keys={keys}
+          onSave={saveHost}
+          onClose={() => setEditingHost(null)}
+        />
+      )}
+      {editingGroup && (
+        <GroupDialog
+          group={editingGroup.group}
+          isNew={editingGroup.isNew}
+          hosts={hosts}
+          identities={identities}
+          onSaved={() => {
+            setEditingGroup(null);
+            void refresh();
+          }}
+          onDelete={(path) =>
+            setConfirm({
+              title: 'Delete group',
+              message: `Delete the group "${path}"? Its hosts are kept and move up to the parent group; the group's settings are removed.`,
+              confirmLabel: 'Delete group',
+              run: async () => {
+                await api.deleteGroup(path);
+                setEditingGroup(null);
+                await refresh();
+              },
+            })
+          }
+          onClose={() => setEditingGroup(null)}
+        />
+      )}
+      {editingIdentity !== undefined && (
+        <IdentityDialog
+          identity={editingIdentity}
+          keys={keys}
+          onSaved={() => {
+            setEditingIdentity(undefined);
+            void refresh();
+          }}
+          onDelete={(i) =>
+            setConfirm({
+              title: 'Delete identity',
+              message: `Delete "${i.label}"? Hosts and groups using it fall back to their own credentials.`,
+              confirmLabel: 'Delete',
+              run: async () => {
+                await api.deleteIdentity(i.id);
+                setEditingIdentity(undefined);
+                await refresh();
+              },
+            })
+          }
+          onClose={() => setEditingIdentity(undefined)}
+        />
+      )}
+      {keyDialog === 'generate' && (
+        <GenerateKeyDialog
+          onSaved={(k) => {
+            void refresh();
+            setKeyDialog(k);
+            notify(`Generated ${k.label} — install it on a server below`);
+          }}
+          onClose={() => setKeyDialog(null)}
+        />
+      )}
+      {keyDialog === 'import' && (
+        <ImportKeyDialog
+          onSaved={(k) => {
+            void refresh();
+            setKeyDialog(null);
+            notify(`Imported ${k.label}`);
+          }}
+          onClose={() => setKeyDialog(null)}
+        />
+      )}
+      {keyDialog && typeof keyDialog === 'object' && (
+        <KeyDetailsDialog
+          keyItem={keys.find((k) => k.id === keyDialog.id) ?? keyDialog}
+          hosts={hosts}
+          notify={notify}
+          onChanged={() => void refresh()}
+          onDelete={(k) =>
+            setConfirm({
+              title: 'Delete key',
+              message: `Delete "${k.label}" from the keychain? Hosts using it will need another way to log in. The public key stays on servers until you remove it there.`,
+              confirmLabel: 'Delete key',
+              run: async () => {
+                await api.deleteKey(k.id);
+                setKeyDialog(null);
+                await refresh();
+              },
+            })
+          }
+          onClose={() => setKeyDialog(null)}
+        />
+      )}
+      {editingTunnel !== undefined && (
+        <TunnelDialog
+          tunnel={editingTunnel}
+          hosts={hosts}
+          onSaved={() => {
+            setEditingTunnel(undefined);
+            void refresh();
+          }}
+          onClose={() => setEditingTunnel(undefined)}
+        />
+      )}
+      {pickHosts && (
+        <PickHostsDialog
+          title={`Run "${pickHosts.name}" on…`}
+          hosts={hosts.filter((h) => (h.protocol || 'ssh') !== 'serial')}
+          confirmLabel="Open & run"
+          onPick={(ids) => {
+            const s = pickHosts;
+            setPickHosts(null);
+            if (snippetVars(s.command).length) setVarsRequest({ snippet: s, execute: true, hostIds: ids });
+            else runOnHosts(s, ids);
+          }}
+          onClose={() => setPickHosts(null)}
+        />
       )}
       {varsRequest && (
         <SnippetVarsDialog
@@ -731,8 +1154,10 @@ export default function App() {
             activeSession?.focus();
           }}
           onSubmit={(command) => {
+            const req = varsRequest;
             setVarsRequest(null);
-            sendCommand(command, varsRequest.execute);
+            if (req.hostIds) runOnHosts(req.snippet, req.hostIds, command);
+            else sendCommand(command, req.execute);
           }}
         />
       )}
@@ -742,6 +1167,17 @@ export default function App() {
           groups={[...new Set(snippets.map((s) => s.group).filter(Boolean))].sort()}
           onSave={saveSnippet}
           onClose={() => setEditingSnippet(undefined)}
+        />
+      )}
+      {prompt && (
+        <PromptDialog
+          title={prompt.title}
+          label={prompt.label}
+          initial={prompt.initial}
+          placeholder={prompt.placeholder}
+          confirmLabel={prompt.confirmLabel}
+          onCancel={() => setPrompt(null)}
+          onSubmit={prompt.run}
         />
       )}
       {confirm && (
@@ -786,3 +1222,4 @@ export default function App() {
     </div>
   );
 }
+

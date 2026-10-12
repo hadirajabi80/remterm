@@ -31,3 +31,7 @@ func (a *App) ExplorerMenuEnabled() bool { return false }
 func (a *App) SetExplorerMenu(bool) error {
 	return errors.New("the Explorer menu is Windows-only")
 }
+
+func openWithDefaultApp(string) error { return errors.New("opening files is Windows-only for now") }
+
+func (a *App) ImportPuTTY() (int, error) { return 0, errors.New("PuTTY import is Windows-only") }

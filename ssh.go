@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -27,6 +26,7 @@ type Session struct {
 	stdin   io.Writer
 	resize  func(cols, rows int) error
 	closeFn func()
+	log     *sessionLog // nil when logging is off
 	done    chan struct{}
 	once    sync.Once
 }
@@ -80,20 +80,22 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 		}
 	}
 
-	secret := req.Password
-	if secret == "" && h.HasSecret {
-		secret, _ = getSecret(h.ID)
+	switch h.Protocol {
+	case "telnet":
+		return ConnectResult{HostID: h.ID}, a.openTelnet(req, h)
+	case "serial":
+		return ConnectResult{HostID: h.ID}, a.openSerial(req, h)
 	}
 
-	client, jump, err := a.dial(h, secret)
+	conn, err := a.connectHost(h, req.Password, nil)
 	if err != nil {
 		return ConnectResult{}, err
 	}
 
 	cols, rows := clamp(req.Cols, 20, 1000, 80), clamp(req.Rows, 5, 500, 24)
-	sess, stdin, stdout, stderr, err := openShell(client, cols, rows)
+	sess, stdin, stdout, stderr, err := openShell(conn, cols, rows)
 	if err != nil {
-		closeAll(client, jump)
+		conn.Close()
 		return ConnectResult{}, err
 	}
 
@@ -101,18 +103,16 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 
 	s := &Session{
 		id:     req.SessionID,
-		client: client,
+		client: conn.client,
 		stdin:  stdin,
 		resize: func(cols, rows int) error { return sess.WindowChange(rows, cols) },
 		closeFn: func() {
 			sess.Close()
-			closeAll(client, jump)
+			conn.Close()
 		},
 		done: make(chan struct{}),
 	}
-	a.mu.Lock()
-	a.sessions[s.id] = s
-	a.mu.Unlock()
+	a.registerSession(s, "ssh:"+res.HostID, conn.host.Name)
 
 	go a.pump(s, stdout)
 	go a.pump(s, stderr)
@@ -130,20 +130,37 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 	}()
 	go a.keepalive(s)
 
-	if cmd := strings.TrimSpace(h.StartupCommand); cmd != "" {
+	if cmd := strings.TrimSpace(conn.host.StartupCommand); cmd != "" {
 		_, _ = io.WriteString(stdin, cmd+"\n")
 	}
 	return res, nil
 }
 
-func openShell(client *ssh.Client, cols, rows int) (*ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
-	sess, err := client.NewSession()
+// registerSession makes a session reachable by id and starts its log.
+func (a *App) registerSession(s *Session, hostKey, title string) {
+	s.log = a.logs.start(hostKey, title)
+	a.mu.Lock()
+	a.sessions[s.id] = s
+	a.mu.Unlock()
+}
+
+func openShell(conn *sshConn, cols, rows int) (*ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
+	sess, err := conn.client.NewSession()
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 	fail := func(err error) (*ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
 		sess.Close()
 		return nil, nil, nil, nil, err
+	}
+	if conn.forward != nil {
+		if err := agent.ForwardToAgent(conn.client, conn.forward); err == nil {
+			_ = agent.RequestAgentForwarding(sess)
+		}
+	}
+	// Like OpenSSH SendEnv: the server drops names its AcceptEnv doesn't allow.
+	for _, v := range conn.host.EnvVars {
+		_ = sess.Setenv(v.Name, v.Value)
 	}
 	modes := ssh.TerminalModes{ssh.ECHO: 1, ssh.TTY_OP_ISPEED: 14400, ssh.TTY_OP_OSPEED: 14400}
 	if err := sess.RequestPty("xterm-256color", rows, cols, modes); err != nil {
@@ -204,10 +221,11 @@ func (a *App) closeSession(s *Session, reason string, lost bool, exitCode int) {
 	s.once.Do(func() {
 		close(s.done)
 		s.closeFn()
+		s.log.finish()
 		a.mu.Lock()
 		delete(a.sessions, s.id)
 		a.mu.Unlock()
-		wruntime.EventsEmit(a.ctx, "term:closed", s.id, reason, lost, exitCode)
+		a.emit("term:closed", s.id, reason, lost, exitCode)
 	})
 }
 
@@ -219,7 +237,8 @@ func (a *App) pump(s *Session, r io.Reader) {
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
-			wruntime.EventsEmit(a.ctx, "term:data", s.id, base64.StdEncoding.EncodeToString(buf[:n]))
+			a.emit("term:data", s.id, base64.StdEncoding.EncodeToString(buf[:n]))
+			s.log.write(buf[:n])
 		}
 		if err != nil {
 			return
@@ -247,7 +266,7 @@ func (a *App) keepalive(s *Session) {
 				a.closeSession(s, "Connection lost", true, -1)
 				return
 			}
-			wruntime.EventsEmit(a.ctx, "term:latency", s.id, time.Since(start).Milliseconds())
+			a.emit("term:latency", s.id, time.Since(start).Milliseconds())
 		case <-time.After(20 * time.Second):
 			a.closeSession(s, "Connection timed out", true, -1)
 			return
@@ -258,167 +277,6 @@ func (a *App) keepalive(s *Session) {
 		case <-ticker.C:
 		}
 	}
-}
-
-// ---- Dialing & auth ----
-
-func (a *App) dial(h Host, secret string) (client, jump *ssh.Client, err error) {
-	cfg, cleanup, err := a.clientConfig(h, secret)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer cleanup()
-	addr := hostAddr(h)
-	cfg.HostKeyAlgorithms = hostKeyAlgorithms(addr)
-
-	if h.JumpHostID == "" {
-		client, err = ssh.Dial("tcp", addr, cfg)
-		return client, nil, wrapDialErr(err)
-	}
-
-	jh, ok := a.store.Host(h.JumpHostID)
-	if !ok {
-		return nil, nil, errors.New("jump host no longer exists — edit this host")
-	}
-	jsecret := ""
-	if jh.HasSecret {
-		jsecret, _ = getSecret(jh.ID)
-	}
-	jcfg, jcleanup, err := a.clientConfig(jh, jsecret)
-	if err != nil {
-		return nil, nil, fmt.Errorf("jump host %s: %w", jh.Name, err)
-	}
-	defer jcleanup()
-	jaddr := hostAddr(jh)
-	jcfg.HostKeyAlgorithms = hostKeyAlgorithms(jaddr)
-
-	jump, err = ssh.Dial("tcp", jaddr, jcfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("jump host %s: %w", jh.Name, wrapDialErr(err))
-	}
-	conn, err := jump.Dial("tcp", addr)
-	if err != nil {
-		jump.Close()
-		return nil, nil, fmt.Errorf("jump host %s cannot reach %s: %w", jh.Name, addr, err)
-	}
-	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
-	if err != nil {
-		conn.Close()
-		jump.Close()
-		return nil, nil, wrapDialErr(err)
-	}
-	return ssh.NewClient(c, chans, reqs), jump, nil
-}
-
-// clientConfig builds the auth chain:
-//
-//	auto     → explicit key or default ~/.ssh keys, ssh-agent, then password
-//	key      → explicit key or default keys only (secret = passphrase)
-//	password → password / keyboard-interactive only
-func (a *App) clientConfig(h Host, secret string) (*ssh.ClientConfig, func(), error) {
-	cleanup := func() {}
-	method := h.AuthMethod
-	if method == "" {
-		method = "auto"
-	}
-	username := h.User
-	if username == "" {
-		username = defaultUser()
-	}
-
-	var methods []ssh.AuthMethod
-	if method != "password" {
-		var signers []ssh.Signer
-		if h.KeyPath != "" {
-			s, err := loadSigner(expandPath(h.KeyPath), secret)
-			if err != nil {
-				return nil, cleanup, err
-			}
-			signers = append(signers, s)
-		} else {
-			for _, p := range defaultKeyPaths() {
-				if s, err := loadSigner(p, secret); err == nil {
-					signers = append(signers, s)
-				}
-			}
-		}
-
-		var agentClient agent.ExtendedAgent
-		if method == "auto" {
-			if conn, err := dialAgent(); err == nil {
-				agentClient = agent.NewClient(conn)
-				cleanup = func() { conn.Close() }
-			}
-		}
-		if method == "key" && len(signers) == 0 {
-			return nil, cleanup, errors.New("no private key found — choose a key file in host settings")
-		}
-		methods = append(methods, ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-			all := append([]ssh.Signer(nil), signers...)
-			if agentClient != nil {
-				if as, err := agentClient.Signers(); err == nil {
-					all = append(all, as...)
-				}
-			}
-			return all, nil
-		}))
-	}
-
-	if method != "key" {
-		if secret != "" {
-			methods = append(methods,
-				ssh.Password(secret),
-				ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
-					answers := make([]string, len(questions))
-					for i := range answers {
-						answers[i] = secret
-					}
-					return answers, nil
-				}),
-			)
-		} else if method == "password" {
-			return nil, cleanup, errors.New(errAuthFailed + ": password required")
-		}
-	}
-
-	return &ssh.ClientConfig{
-		User:            username,
-		Auth:            methods,
-		HostKeyCallback: a.hostKeyCallback(),
-		Timeout:         15 * time.Second,
-	}, cleanup, nil
-}
-
-func loadSigner(path, passphrase string) (ssh.Signer, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read key %s: %w", path, err)
-	}
-	s, err := ssh.ParsePrivateKey(b)
-	var missing *ssh.PassphraseMissingError
-	if errors.As(err, &missing) {
-		if passphrase == "" {
-			return nil, fmt.Errorf("%s: key %s is encrypted", errPassphraseRequired, filepath.Base(path))
-		}
-		s, err = ssh.ParsePrivateKeyWithPassphrase(b, []byte(passphrase))
-		if err != nil {
-			return nil, fmt.Errorf("%s: wrong passphrase for key %s", errPassphraseRequired, filepath.Base(path))
-		}
-	}
-	if err != nil {
-		return nil, fmt.Errorf("parse key %s: %w", filepath.Base(path), err)
-	}
-	return s, nil
-}
-
-func wrapDialErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if strings.Contains(err.Error(), "unable to authenticate") {
-		return errors.New(errAuthFailed + ": authentication failed")
-	}
-	return err
 }
 
 // ---- helpers ----

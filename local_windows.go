@@ -104,9 +104,11 @@ func (a *App) OpenLocal(req LocalRequest) error {
 		closeFn: func() { _ = cpty.Close() },
 		done:    make(chan struct{}),
 	}
-	a.mu.Lock()
-	a.sessions[s.id] = s
-	a.mu.Unlock()
+	title := shell.Name
+	if req.Cwd != "" {
+		title += " — " + req.Cwd
+	}
+	a.registerSession(s, "local:"+shell.ID, title)
 
 	go a.pump(s, cpty)
 	go func() {

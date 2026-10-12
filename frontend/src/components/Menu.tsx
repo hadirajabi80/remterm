@@ -1,15 +1,38 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 export interface MenuItem {
   label: string;
   hint?: string;
   icon?: ReactNode;
+  disabled?: boolean;
   onClick(): void;
 }
 
-/** Small dropdown anchored below its parent (which must be position: relative). */
-export function Menu({ items, onClose, align = 'left' }: { items: (MenuItem | 'sep')[]; onClose(): void; align?: 'left' | 'right' }) {
+/**
+ * Small dropdown. Anchored below its parent (which must be position:
+ * relative), or at a screen point (`at`, for right-click menus).
+ */
+export function Menu({
+  items,
+  onClose,
+  align = 'left',
+  at,
+}: {
+  items: (MenuItem | 'sep')[];
+  onClose(): void;
+  align?: 'left' | 'right';
+  at?: { x: number; y: number };
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState(at);
+
+  useLayoutEffect(() => {
+    if (!at || !ref.current) return;
+    // Keep the menu inside the window.
+    const r = ref.current.getBoundingClientRect();
+    setPos({ x: Math.min(at.x, window.innerWidth - r.width - 6), y: Math.min(at.y, window.innerHeight - r.height - 6) });
+  }, [at]);
+
   useEffect(() => {
     const down = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
@@ -22,14 +45,22 @@ export function Menu({ items, onClose, align = 'left' }: { items: (MenuItem | 's
     };
     window.addEventListener('mousedown', down, true);
     window.addEventListener('keydown', key, true);
+    window.addEventListener('blur', onClose);
     return () => {
       window.removeEventListener('mousedown', down, true);
       window.removeEventListener('keydown', key, true);
+      window.removeEventListener('blur', onClose);
     };
   }, [onClose]);
 
   return (
-    <div ref={ref} className={`menu ${align}`} role="menu">
+    <div
+      ref={ref}
+      className={`menu ${at ? 'at' : align}`}
+      style={pos ? { left: pos.x, top: pos.y } : undefined}
+      role="menu"
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {items.map((it, i) =>
         it === 'sep' ? (
           <div key={i} className="menu-sep" />
@@ -38,6 +69,7 @@ export function Menu({ items, onClose, align = 'left' }: { items: (MenuItem | 's
             key={i}
             role="menuitem"
             className="menu-item"
+            disabled={it.disabled}
             onClick={() => {
               onClose();
               it.onClick();

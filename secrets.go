@@ -17,3 +17,13 @@ func getSecret(hostID string) (string, error) {
 func deleteSecret(hostID string) {
 	_ = keyring.Delete(keyringService, "host:"+hostID)
 }
+
+// Named secrets: "identity:<id>", "key:<id>", "proxy:<hostId>", "proxy:group:<path>".
+func setNamedSecret(name, secret string) error { return keyring.Set(keyringService, name, secret) }
+
+func getNamedSecret(name string) string {
+	v, _ := keyring.Get(keyringService, name)
+	return v
+}
+
+func deleteNamedSecret(name string) { _ = keyring.Delete(keyringService, name) }

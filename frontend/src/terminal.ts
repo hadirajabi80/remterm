@@ -23,6 +23,8 @@ export interface SessionEvents {
   focused(): void;
   /** ↑ at a prompt: show the history list with the typed text as filter. */
   historyList(query: string, anchor: CursorAnchor | null): void;
+  /** First output since the user last looked at this pane. */
+  output(): void;
 }
 
 export interface TermOptions {
@@ -53,6 +55,9 @@ export class TermSession {
   private flushing = false;
   private latency?: number;
   private readonly tracker: LineTracker;
+  private watching = true;
+  private signaledOutput = false;
+  private runQueue: string[] = [];
 
   constructor(
     private target: PaneTarget,
@@ -92,7 +97,20 @@ export class TermSession {
   get historyKey(): string {
     const t = this.target;
     if (t.kind === 'local') return `local:${t.shellId}`;
+    if (t.kind !== 'ssh') return t.kind;
     return t.hostId ? `ssh:${t.hostId}` : `spec:${t.spec}`;
+  }
+
+  /** Whether the user can see this pane; unseen output raises events.output once. */
+  setWatching(watching: boolean) {
+    this.watching = watching;
+    if (watching) this.signaledOutput = false;
+  }
+
+  /** Sends text as soon as the session is connected (multi-host snippet runs). */
+  runWhenConnected(text: string) {
+    if (this.connected) this.send(text);
+    else this.runQueue.push(text);
   }
 
   /** Replaces the current prompt line with a command from history. */
@@ -190,7 +208,13 @@ export class TermSession {
     this.setState(wasReconnecting ? 'reconnecting' : 'connecting');
 
     this.unregister = registerSession(id, {
-      data: (b) => this.term.write(b),
+      data: (b) => {
+        this.term.write(b);
+        if (!this.watching && !this.signaledOutput) {
+          this.signaledOutput = true;
+          this.events.output();
+        }
+      },
       closed: (reason, lost, exitCode) => this.onClosed(id, reason, lost, exitCode),
       latency: (ms) => {
         if (this.sessionId !== id) return;
@@ -201,19 +225,21 @@ export class TermSession {
 
     let result: ConnectResult | null = null;
     try {
-      if (this.target.kind === 'local') {
+      const t = this.target;
+      if (t.kind === 'sftp' || t.kind === 'log') throw new Error('not a terminal');
+      if (t.kind === 'local') {
         await api.openLocal({
           sessionId: id,
-          shellId: this.target.shellId,
-          cwd: this.target.cwd,
+          shellId: t.shellId,
+          cwd: t.cwd,
           cols: this.term.cols,
           rows: this.term.rows,
         });
       } else {
         result = await api.connect({
           sessionId: id,
-          hostId: this.target.hostId ?? '',
-          spec: this.target.spec ?? '',
+          hostId: t.hostId ?? '',
+          spec: t.spec ?? '',
           password: this.password,
           savePassword: save,
           cols: this.term.cols,
@@ -255,6 +281,11 @@ export class TermSession {
     }
     // Size may have changed while we were connecting.
     api.resize(id, this.term.cols, this.term.rows).catch(() => {});
+    if (this.runQueue.length) {
+      const queued = this.runQueue.splice(0);
+      // Give the shell a moment to print its prompt first.
+      window.setTimeout(() => queued.forEach((q) => this.send(q)), 800);
+    }
   }
 
   private onClosed(id: string, reason: string, lost: boolean, exitCode: number) {

@@ -1,7 +1,7 @@
 // Command appicon draws the Termora icon and writes the Windows resources
 // (icon, manifest, version info) as .syso files that `go build` links in.
 //
-//	go run ./tools/appicon
+//	go run ./tools/appicon [version]
 //
 // Each icon size is rendered from the vector description directly instead of
 // being downscaled, so the 16–32 px variants stay sharp.
@@ -21,11 +21,14 @@ import (
 	"github.com/tc-hib/winres/version"
 )
 
-const appVersion = "0.1.0"
+var appVersion = "0.1.0" // overridden by the first argument
 
 var sizes = []int{256, 128, 64, 48, 40, 32, 24, 20, 16}
 
 func main() {
+	if len(os.Args) > 1 {
+		appVersion = os.Args[1]
+	}
 	var images []image.Image
 	for _, s := range sizes {
 		images = append(images, render(s))

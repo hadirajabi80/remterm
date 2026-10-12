@@ -27,6 +27,18 @@ type Host struct {
 	StartupCommand string `json:"startupCommand"`
 	HasSecret      bool   `json:"hasSecret"`
 	LastUsed       int64  `json:"lastUsed"` // unix ms of the last successful connection
+
+	Protocol        string        `json:"protocol"` // "ssh" (default), "telnet", "serial"
+	Tags            []string      `json:"tags"`
+	KeyID           string        `json:"keyId"`      // keychain key
+	IdentityID      string        `json:"identityId"` // reusable credentials
+	AgentForwarding bool          `json:"agentForwarding"`
+	EnvVars         []EnvVar      `json:"envVars"`
+	Proxy           *Proxy        `json:"proxy,omitempty"`
+	Scheme          string        `json:"scheme"` // terminal color scheme override
+	Serial          *SerialConfig `json:"serial,omitempty"`
+
+	ProxySecretKey string `json:"-"` // keyring entry of the resolved proxy password
 }
 
 // Snippet is a reusable command that can be sent to a session.
@@ -45,6 +57,11 @@ type storeData struct {
 	Snippets        []Snippet       `json:"snippets"`
 	SnippetsVersion int             `json:"snippetsVersion"`    // built-in catalog version merged in
 	Settings        json.RawMessage `json:"settings,omitempty"` // UI preferences, shape owned by the frontend
+	Groups          []GroupConfig   `json:"groups"`
+	Identities      []Identity      `json:"identities"`
+	Keys            []KeyItem       `json:"keys"`
+	Tunnels         []Tunnel        `json:"tunnels"`
+	Workspaces      []Workspace     `json:"workspaces"`
 }
 
 // Store persists hosts and snippets as JSON in the user config dir.
@@ -56,6 +73,9 @@ type Store struct {
 }
 
 func dataDir() (string, error) {
+	if d := os.Getenv("TERMORA_DATA_DIR"); d != "" { // tests
+		return d, os.MkdirAll(d, 0o700)
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err

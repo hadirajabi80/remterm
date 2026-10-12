@@ -37,6 +37,8 @@ func main() {
 			UniqueId:               "termora-7c41f0d2-single-instance",
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
+		// Files dragged in from Explorer go to SFTP panes (upload) or terminals (paste path).
+		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		Windows: &windows.Options{
 			Theme: windows.Dark,
 		},

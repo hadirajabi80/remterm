@@ -26,7 +26,7 @@ export function isRecordable(cmd: string): boolean {
 }
 
 /** User preferences read by terminals while typing. */
-export const typingPrefs = { autosuggest: true, historyOnUp: true, defaultShell: '' };
+export const typingPrefs = { autosuggest: true, historyOnUp: true, defaultShell: '', recordLogs: true };
 
 class HistoryStore {
   private entries: CmdEntry[] = [];

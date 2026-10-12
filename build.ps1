@@ -20,8 +20,8 @@ try {
 
     # Icon, manifest and version info for the app and the installer
     # (regenerate after editing tools\appicon: delete the .syso files).
-    if (-not (Test-Path rsrc_windows_amd64.syso) -or -not (Test-Path installer\rsrc_windows_amd64.syso)) {
-        Invoke-Step 'resource generation' { go run ./tools/appicon }
+    if ($Installer -or -not (Test-Path rsrc_windows_amd64.syso) -or -not (Test-Path installer\rsrc_windows_amd64.syso)) {
+        Invoke-Step 'resource generation' { go run ./tools/appicon $Version }
     }
 
     New-Item -ItemType Directory -Force build\bin | Out-Null

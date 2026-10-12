@@ -20,8 +20,8 @@ func TestCwdFromArgs(t *testing.T) {
 		{[]string{"--cwd", dir}, dir},
 		{[]string{"--cwd=" + dir}, dir},
 		{[]string{`--cwd`, `"` + dir + `"`}, dir}, // quoted, as Explorer may pass it
-		{[]string{dir}, dir},                    // bare folder (drag onto exe)
-		{[]string{"--cwd", file}, dir},          // a file opens its folder
+		{[]string{dir}, dir},                      // bare folder (drag onto exe)
+		{[]string{"--cwd", file}, dir},            // a file opens its folder
 		{[]string{"--cwd", filepath.Join(dir, "missing")}, ""},
 	}
 	for _, c := range cases {

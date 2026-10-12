@@ -13,6 +13,8 @@ export interface TabView {
   paneCount: number;
   broadcast: boolean;
   local: boolean;
+  kind: string; // pane type of the active pane
+  unread: boolean; // new output in a pane you are not looking at
 }
 
 export function TabBar(props: {
@@ -69,8 +71,11 @@ export function TabBar(props: {
             {t.env && <span className={`tab-env env-${t.env}`} />}
             <span className={`sdot ${t.status}`} />
             {t.local && <Icon name="terminal" size={12} />}
+            {t.kind === 'sftp' && <Icon name="folder" size={12} />}
+            {t.kind === 'log' && <Icon name="file" size={12} />}
             <span className="tab-title">{t.title}</span>
             {t.paneCount > 1 && <span className="tab-count" title={`${t.paneCount} panes`}>{t.paneCount}</span>}
+            {t.unread && <span className="tab-unread" title="New output" />}
             {t.broadcast && (
               <span className="tab-broadcast" title="Broadcast input is on">
                 <Icon name="broadcast" size={12} />

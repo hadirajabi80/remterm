@@ -93,3 +93,11 @@ func messageBox(title, text string, flags uint32) int {
 	ret, _ := windows.MessageBox(0, m, t, flags|windows.MB_SETFOREGROUND)
 	return int(ret)
 }
+
+// openWithDefaultApp opens a file or folder like a double-click in Explorer.
+func openWithDefaultApp(path string) error {
+	verb, _ := windows.UTF16PtrFromString("open")
+	file, _ := windows.UTF16PtrFromString(path)
+	dir, _ := windows.UTF16PtrFromString(filepath.Dir(path))
+	return windows.ShellExecute(0, verb, file, nil, dir, windows.SW_SHOWNORMAL)
+}

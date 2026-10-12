@@ -24,7 +24,9 @@ export function SnippetInfo(props: {
   snippet: Snippet;
   canRun: boolean;
   onRun(execute: boolean): void;
+  onRunOnHosts(): void;
   onEdit(): void;
+  onDelete(): void;
   onClose(): void;
 }) {
   const s = props.snippet;
@@ -52,11 +54,17 @@ export function SnippetInfo(props: {
         <button className="btn sm" disabled={!props.canRun} onClick={() => props.onRun(false)} title="Type it without pressing Enter">
           <Icon name="insert" size={13} /> Insert
         </button>
-        <button className="btn sm" onClick={props.onEdit}>
-          <Icon name="edit" size={13} /> Edit
+        <button className="btn sm" onClick={props.onEdit} title="Edit">
+          <Icon name="edit" size={13} />
+        </button>
+        <button className="btn sm danger-text" onClick={props.onDelete} title="Delete">
+          <Icon name="trash" size={13} />
         </button>
       </div>
-      {!props.canRun && <div className="si-hint">Open a connection to run this snippet.</div>}
+      <button className="btn sm full" onClick={props.onRunOnHosts}>
+        <Icon name="broadcast" size={13} /> Run on several hosts…
+      </button>
+      {!props.canRun && <div className="si-hint">Open a terminal to run it here.</div>}
     </div>
   );
 }

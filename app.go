@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -22,10 +23,18 @@ type App struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
 	launch   launchState
+	logs     *logStore
+	tunnels  tunnelManager
+	files    fileManager
 }
 
 func NewApp() *App {
-	return &App{sessions: make(map[string]*Session)}
+	return &App{
+		sessions: make(map[string]*Session),
+		logs:     &logStore{},
+		tunnels:  tunnelManager{running: map[string]*runningTunnel{}, status: map[string]TunnelStatus{}},
+		files:    fileManager{sessions: map[string]*fileSession{}, transfers: map[string]context.CancelFunc{}},
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -40,12 +49,15 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.store = s
 	a.history = openCmdHistory()
+	a.logs = openLogStore()
+	a.startAutoTunnels()
 }
 
 func (a *App) shutdown(context.Context) {
 	if a.history != nil {
 		a.history.flush()
 	}
+	a.stopAllTunnels()
 	a.mu.Lock()
 	all := make([]*Session, 0, len(a.sessions))
 	for _, s := range a.sessions {
@@ -65,11 +77,14 @@ func (a *App) ListHosts() []Host {
 
 // SaveHost creates or updates a host. A non-empty secret is written to the
 // OS credential store; an empty one keeps whatever is already saved.
-func (a *App) SaveHost(h Host, secret string) (Host, error) {
+func (a *App) SaveHost(h Host, secret, proxyPassword string) (Host, error) {
 	h.Address = strings.TrimSpace(h.Address)
 	h.User = strings.TrimSpace(h.User)
 	h.Name = strings.TrimSpace(h.Name)
 	h.Group = strings.TrimSpace(h.Group)
+	if h.Protocol == "serial" && h.Address == "" && h.Serial != nil {
+		h.Address = h.Serial.Port
+	}
 	if h.Address == "" {
 		return Host{}, errors.New("address is required")
 	}
@@ -92,6 +107,23 @@ func (a *App) SaveHost(h Host, secret string) (Host, error) {
 	h.HasSecret, h.LastUsed = false, 0
 	if old, ok := a.store.Host(h.ID); ok {
 		h.HasSecret, h.LastUsed = old.HasSecret, old.LastUsed
+		if h.Proxy != nil && old.Proxy != nil {
+			h.Proxy.HasSecret = old.Proxy.HasSecret
+		}
+	}
+	h.Tags = normalizeTags(h.Tags)
+	if h.Proxy != nil && strings.TrimSpace(h.Proxy.Host) == "" {
+		h.Proxy = nil
+		deleteNamedSecret("proxy:" + h.ID)
+	}
+	if h.Proxy != nil && proxyPassword != "" {
+		if err := setNamedSecret("proxy:"+h.ID, proxyPassword); err != nil {
+			return Host{}, err
+		}
+		h.Proxy.HasSecret = true
+	}
+	if h.Protocol == "serial" && (h.Serial == nil || h.Serial.Port == "") {
+		return Host{}, errors.New("choose a serial port")
 	}
 	if secret != "" {
 		if err := setSecret(h.ID, secret); err != nil {
@@ -173,4 +205,25 @@ func (a *App) SaveSettings(raw string) error {
 		return errors.New("invalid settings JSON")
 	}
 	return a.store.PutSettings(json.RawMessage(raw))
+}
+
+func normalizeTags(tags []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t != "" && !seen[strings.ToLower(t)] {
+			seen[strings.ToLower(t)] = true
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// emit sends an event to the UI; without a window (tests) it does nothing.
+func (a *App) emit(name string, data ...interface{}) {
+	if a.ctx != nil {
+		wruntime.EventsEmit(a.ctx, name, data...)
+	}
 }

@@ -4,6 +4,7 @@ import type { TermSession } from '../terminal';
 import type { Pane, Tab } from '../types';
 import { Icon } from './Icon';
 import { TermView } from './TermView';
+import type { ReactNode } from 'react';
 
 const FULL: Rect = { x: 0, y: 0, w: 100, h: 100 };
 
@@ -20,6 +21,8 @@ export function TabPanes(props: {
   onActivate(paneKey: string): void;
   onRatio(splitKey: string, ratio: number): void;
   onClosePane(paneKey: string): void;
+  /** Content for non-terminal panes (SFTP, log viewer). */
+  renderPane(pane: Pane, active: boolean): ReactNode;
 }) {
   const { tab } = props;
   const ref = useRef<HTMLDivElement>(null);
@@ -53,17 +56,19 @@ export function TabPanes(props: {
       {stable.map((k) => {
         const pane = props.panes[k];
         const session = props.sessions.get(k);
-        if (!pane || !session) return null;
+        const terminal = pane?.target.kind === 'ssh' || pane?.target.kind === 'local';
+        if (!pane || (terminal && !session)) return null;
         const r = tab.zoomed ? (k === tab.activePane ? FULL : null) : rects.get(k);
         const isActive = k === tab.activePane;
         return (
           <div
             key={k}
+            data-pane-key={k}
             className={`pane ${multi && !tab.zoomed ? 'multi' : ''} ${multi && isActive && !tab.zoomed ? 'active' : ''} ${r ? '' : 'hidden'} ${tab.broadcast && multi ? 'broadcast' : ''}`}
             style={r ? { left: `${r.x}%`, top: `${r.y}%`, width: `${r.w}%`, height: `${r.h}%` } : undefined}
             onMouseDown={() => !isActive && props.onActivate(k)}
           >
-            <TermView session={session} active={props.visible && isActive} />
+            {terminal ? <TermView session={session!} active={props.visible && isActive} /> : props.renderPane(pane, props.visible && isActive)}
             {multi && !tab.zoomed && (
               <div className="pane-head">
                 <span className={`sdot ${pane.status}`} />

@@ -107,3 +107,99 @@ export function rememberVar(name: string, value: string) {
     /* storage unavailable */
   }
 }
+
+// ---- groups ----
+
+export interface GroupNode {
+  path: string; // "" for the root
+  name: string;
+  children: GroupNode[];
+  hosts: Host[];
+  total: number; // hosts in this group and below
+}
+
+/** Nested group tree from "A/B/C" group paths (plus groups that only exist as settings). */
+export function buildGroupTree(hosts: Host[], groupPaths: string[]): GroupNode {
+  const root: GroupNode = { path: '', name: '', children: [], hosts: [], total: 0 };
+  const nodeFor = (path: string): GroupNode => {
+    if (!path) return root;
+    let node = root;
+    let acc = '';
+    for (const part of path.split('/').filter(Boolean)) {
+      acc = acc ? `${acc}/${part}` : part;
+      let child = node.children.find((c) => c.path === acc);
+      if (!child) {
+        child = { path: acc, name: part, children: [], hosts: [], total: 0 };
+        node.children.push(child);
+      }
+      node = child;
+    }
+    return node;
+  };
+  for (const g of groupPaths) nodeFor(g);
+  for (const h of hosts) nodeFor(h.group.replace(/^\/+|\/+$/g, '')).hosts.push(h);
+  const finish = (n: GroupNode): number => {
+    n.children.sort((a, b) => a.name.localeCompare(b.name));
+    n.hosts.sort((a, b) => a.name.localeCompare(b.name));
+    n.total = n.hosts.length + n.children.reduce((s, c) => s + finish(c), 0);
+    return n.total;
+  };
+  finish(root);
+  return root;
+}
+
+export function hostsInGroup(hosts: Host[], path: string): Host[] {
+  return hosts.filter((h) => h.group === path || h.group.startsWith(path + '/'));
+}
+
+/** Nearest setting from the host, then its groups (deepest first). */
+export function inherited<K extends 'scheme' | 'identityId' | 'jumpHostId'>(
+  host: Host,
+  groups: { path: string; scheme: string; identityId: string; jumpHostId: string }[],
+  key: K,
+): string {
+  if (host[key]) return host[key];
+  const parts = host.group.split('/').filter(Boolean);
+  for (let i = parts.length; i > 0; i--) {
+    const g = groups.find((x) => x.path === parts.slice(0, i).join('/'));
+    if (g?.[key]) return g[key];
+  }
+  return '';
+}
+
+// ---- formatting ----
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+export function formatDate(ms: number): string {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(undefined, {
+    year: sameYear ? undefined : 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function octal(perm: number): string {
+  return (perm & 0o777).toString(8).padStart(3, '0');
+}
+
+export const PROTOCOLS = [
+  { value: 'ssh', label: 'SSH' },
+  { value: 'telnet', label: 'Telnet' },
+  { value: 'serial', label: 'Serial' },
+];
