@@ -521,19 +521,33 @@ func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
 		return nil, false, err
 	}
 
-	cmd := exec.Command("xdg-open", file)
+	opener := "xdg-open"
 	if runtime.GOOS == "darwin" {
-		cmd = exec.Command("open", file)
+		opener = "open"
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		msg := strings.TrimSpace(string(out))
-		if runtime.GOOS == "darwin" {
-			return nil, false, fmt.Errorf("could not open the Remote Desktop client (%s). Install Microsoft's “Windows App” from the App Store, then try again", msg)
-		}
-		return nil, false, fmt.Errorf("could not open an RDP client (%s)", msg)
-	}
-
 	message := fmt.Sprintf("Opened %s in your Remote Desktop client", m.Name)
+	if _, err := exec.Command(opener, file).CombinedOutput(); err != nil {
+		// No app for .rdp files (Windows App not installed): try FreeRDP, which also takes the password.
+		fr := findFreeRDP()
+		if fr == "" {
+			return nil, false, errors.New("NO_RDP_CLIENT: No Remote Desktop app is installed. Install Microsoft's free “Windows App” from the App Store (or FreeRDP: brew install freerdp), then connect again.")
+		}
+		args := []string{fmt.Sprintf("/v:%s:%d", host, port), "/u:" + user, "/title:" + m.Name, "/cert:tofu", "+clipboard", "/dynamic-resolution", "+auto-reconnect"}
+		if password != "" {
+			args = append(args, "/p:"+password)
+		}
+		if settings.SessionUsesScreenSize {
+			args = append(args, "/f")
+		}
+		if settings.PlayAudioLocally {
+			args = append(args, "/sound")
+		}
+		if err := exec.Command(fr, args...).Start(); err != nil {
+			return nil, false, fmt.Errorf("could not start FreeRDP: %w", err)
+		}
+		password = "" // already handed over, no clipboard needed
+		message = fmt.Sprintf("Opened %s in FreeRDP", m.Name)
+	}
 	if password != "" && e.app.ctx != nil {
 		_ = wruntime.ClipboardSetText(e.app.ctx, password)
 		message += fmt.Sprintf(" — the %s password is on the clipboard (⌘V)", which)
@@ -555,6 +569,21 @@ func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
 		}
 	}
 	return map[string]any{"message": message}, changed, nil
+}
+
+// findFreeRDP looks for a FreeRDP client (Homebrew puts it outside the PATH of apps started from Finder).
+func findFreeRDP() string {
+	for _, name := range []string{"sdl-freerdp3", "sdl-freerdp", "xfreerdp3", "xfreerdp"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+		for _, dir := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+			if p := filepath.Join(dir, name); fileExists(p) {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 var (

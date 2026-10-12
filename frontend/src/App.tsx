@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cleanError, errorMessage, events, onLaunchOpen } from './api';
+import { api, cleanError, errorMessage, events, onLaunchOpen, openURL } from './api';
 import type { CursorAnchor } from './autocomplete';
 import { history, typingPrefs } from './history';
 import { gridLayout, leaves, neighbor, remapLayout, removePane, setRatio, splitPane, type Direction } from './layout';
@@ -66,7 +66,7 @@ type RdpDialogState =
   | { kind: 'import' };
 
 const STATUS_RANK: Record<TabStatus, number> = { connected: 3, connecting: 2, reconnecting: 1, disconnected: 0 };
-const rdpErrorText = (msg: string) => msg.replace(/^(BASTION|LOCKED):\s*/, '');
+const rdpErrorText = (msg: string) => msg.replace(/^(BASTION|LOCKED|NO_RDP_CLIENT):\s*/, '');
 
 interface AuthRequest {
   kind: AuthKind;
@@ -853,6 +853,16 @@ export default function App() {
         })
         .catch((e) => {
           const msg = errorMessage(e);
+          if (msg.startsWith('NO_RDP_CLIENT:')) {
+            setConfirm({
+              title: 'Install a Remote Desktop app',
+              message:
+                "This Mac has no Remote Desktop app yet. Install Microsoft's free “Windows App” from the App Store, then connect again — Remterm fills in the server and the WALLIX login for you. (FreeRDP works too: brew install freerdp.)",
+              confirmLabel: 'Open App Store',
+              run: () => openURL('macappstore://apps.apple.com/app/id1295203466'),
+            });
+            return;
+          }
           if (msg.startsWith('BASTION:')) setRdpDialog({ kind: 'settings', tab: 'bastion' });
           notify(rdpErrorText(msg), 'error');
         });
