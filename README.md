@@ -16,6 +16,20 @@ It installs to `%LOCALAPPDATA%\Programs\Remterm`, adds Start Menu and Desktop sh
   entries under *Show more options*; setup (or Settings → Explorer integration) can switch on the full right-click menu so it shows
   directly.
 
+### macOS
+
+Download **Remterm-<version>-macOS.dmg** (universal: Apple Silicon and Intel, macOS 11+) and drag Remterm to Applications. It is not
+notarized yet: the first time, right-click Remterm → **Open** → Open (or run `xattr -dr com.apple.quarantine /Applications/Remterm.app`).
+
+- SSH, SFTP, port forwarding, keychain, snippets and local terminals (zsh / bash / fish) work as on Windows.
+- **Remote Desktop**: the same machine list, WALLIX login, logins and import (passwords in the macOS Keychain). A session opens in
+  Microsoft's **Windows App** (free, App Store) with the server and WALLIX login filled in and the password on the clipboard (⌘V).
+  Sessions inside Remterm tabs, auto-fill and the master-password vault need Windows.
+- **Finder**: turn on *Open in Remterm* in Settings → right-click a folder → Quick Actions → Open in Remterm; or drop a folder on the
+  Dock icon.
+
+The `.dmg` is built by GitHub Actions on every release (`build-macos.sh`, `.github/workflows/build.yml`).
+
 ## Features
 
 **Remote Desktop** (sidebar → monitor icon)
