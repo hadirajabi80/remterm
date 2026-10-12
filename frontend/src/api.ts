@@ -32,6 +32,17 @@ declare global {
 
 const call = <T>(method: string, ...args: unknown[]): Promise<T> => window.go.main.App[method](...args);
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  notes: string;
+  page: string;
+  asset: string;
+  url: string;
+  size: number;
+}
+
 export interface ConnectRequest {
   sessionId: string;
   hostId: string;
@@ -65,6 +76,9 @@ export const api = {
   openLocal: (req: { sessionId: string; shellId: string; cwd?: string; cols: number; rows: number }) => call<void>('OpenLocal', req),
   takeLaunchFolder: () => call<string>('TakeLaunchFolder'),
   platform: () => call<string>('Platform'),
+  appVersion: () => call<string>('AppVersion'),
+  checkUpdate: () => call<UpdateInfo>('CheckUpdate'),
+  installUpdate: () => call<void>('InstallUpdate'),
   explorerMenuEnabled: () => call<boolean>('ExplorerMenuEnabled'),
   setExplorerMenu: (enable: boolean) => call<void>('SetExplorerMenu', enable),
   classicMenu: () => call<{ supported: boolean; enabled: boolean }>('ClassicMenu'),

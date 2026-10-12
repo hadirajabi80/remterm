@@ -36,8 +36,20 @@ export const rdp = {
   openDiag: () => call<void>('openDiag'),
 
   /** In-tab session through IronRDP: where to connect (Remterm's relay) and as whom. */
-  webSession: (req: Omit<OpenRequest, 'id'>) =>
-    call<{ proxy: string; token: string; destination: string; username: string; password: string; domain: string }>('webSession', req),
+  webSession: (req: Omit<OpenRequest, 'id'> & { username?: string; password?: string }) =>
+    call<{
+      needsLogin: boolean; // nothing saved: the tab asks
+      loginUser: string; // user name to prefill
+      mode: 'bastion' | 'direct';
+      proxy: string;
+      token: string;
+      destination: string;
+      username: string;
+      password: string;
+      domain: string;
+    }>('webSession', req),
+  /** Save what was typed in a tab's login form (bastion login, or a login for that machine). */
+  rememberLogin: (req: { machineId?: string; mode: string; username: string; password: string }) => call<void>('rememberLogin', req),
   /** macOS: open the machine in the system's RDP client (password goes to the clipboard). */
   launch: (req: Omit<OpenRequest, 'id'>) => call<{ message: string }>('launch', req),
   open: (req: OpenRequest) => call<{ title: string; tooltip: string; machineId: string }>('open', req),

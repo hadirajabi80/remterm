@@ -85,7 +85,10 @@ type rdpRelay struct {
 
 // WebRdpSession is what the page needs to start an in-tab session.
 type WebRdpSession struct {
-	Proxy       string `json:"proxy"` // ws://127.0.0.1:<port>/rdp
+	NeedsLogin  bool   `json:"needsLogin"` // no saved user name/password: the tab asks
+	LoginUser   string `json:"loginUser"`  // user name to prefill in that form
+	Mode        string `json:"mode"`       // "bastion" | "direct"
+	Proxy       string `json:"proxy"`      // ws://127.0.0.1:<port>/rdp
 	Token       string `json:"token"`
 	Destination string `json:"destination"` // host:port
 	Username    string `json:"username"`

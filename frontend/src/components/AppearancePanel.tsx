@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, errorMessage } from '../api';
+import { api, errorMessage, type UpdateInfo } from '../api';
 import { useCoverRect } from '../rdp';
 import { BACKGROUNDS, SCHEMES, loadImageFile } from '../themes';
 import type { Appearance, LocalShell } from '../types';
@@ -20,6 +20,7 @@ export function AppearancePanel(props: {
   onTyping(t: TypingPrefs): void;
   shells: LocalShell[];
   onRdpSettings?(): void;
+  onUpdate?(info: UpdateInfo): void;
   onClose(): void;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
@@ -32,10 +33,20 @@ export function AppearancePanel(props: {
   const [classic, setClassic] = useState<{ supported: boolean; enabled: boolean } | null>(null);
   const [classicChanged, setClassicChanged] = useState(false);
   const [platform, setPlatform] = useState('windows');
+  const [version, setVersion] = useState('');
+  const [updateMsg, setUpdateMsg] = useState('');
+  const [autoUpdate, setAutoUpdate] = useState(() => {
+    try {
+      return localStorage.getItem('autoUpdate') !== 'off';
+    } catch {
+      return true;
+    }
+  });
   useEffect(() => {
     api.explorerMenuEnabled().then(setExplorerMenu).catch(() => setExplorerMenu(false));
     api.classicMenu().then(setClassic).catch(() => setClassic(null));
     api.platform().then(setPlatform).catch(() => {});
+    api.appVersion().then(setVersion).catch(() => {});
   }, []);
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
@@ -251,6 +262,47 @@ export function AppearancePanel(props: {
               </span>
             </label>
           )}
+        </section>
+
+        <section>
+          <h3>Updates</h3>
+          <p className="hint">Remterm {version || '…'}</p>
+          <div className="row-btns">
+            <button
+              className="btn sm"
+              onClick={async () => {
+                setUpdateMsg('Checking…');
+                try {
+                  const info = await api.checkUpdate();
+                  if (info.available) props.onUpdate?.(info);
+                  setUpdateMsg(info.available ? '' : `You have the latest version (${info.latest || info.current}).`);
+                } catch (e) {
+                  setUpdateMsg(errorMessage(e));
+                }
+              }}
+            >
+              <Icon name="refresh" size={13} /> Check for updates
+            </button>
+          </div>
+          {updateMsg && <p className="hint">{updateMsg}</p>}
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={autoUpdate}
+              onChange={(e) => {
+                setAutoUpdate(e.target.checked);
+                try {
+                  localStorage.setItem('autoUpdate', e.target.checked ? 'on' : 'off');
+                } catch {
+                  /* ignore */
+                }
+              }}
+            />
+            <span>
+              <b>Check for updates when Remterm starts</b>
+              <span className="hint">A new version is installed only when you click Update now.</span>
+            </span>
+          </label>
         </section>
 
         {props.onRdpSettings && (

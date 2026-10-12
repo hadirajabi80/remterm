@@ -365,6 +365,8 @@ func (e *rdpEngine) call(method string, p map[string]json.RawMessage) (any, bool
 		return e.launch(p)
 	case "webSession":
 		return e.webSession(p)
+	case "rememberLogin":
+		return e.rememberLogin(p)
 	case "openDiag", "bounds", "focus", "clip", "dock", "fill", "fullscreen", "popout", "reconnect", "disconnect", "close":
 		return nil, false, nil
 	case "connectedCount":
@@ -499,13 +501,78 @@ func (e *rdpEngine) webSession(p map[string]json.RawMessage) (any, bool, error) 
 	if err != nil {
 		return nil, false, err
 	}
-	dest := fmt.Sprintf("%s:%d", ep.host, ep.port)
-	proxy, token, err := e.app.relay.grant(dest)
-	if err != nil {
+	// The user name the person types: the bastion user (the WALLIX login is built from it) or the machine login.
+	plain := ep.user
+	if ep.m.Mode != "direct" {
+		plain = e.data.Bastion.PrimaryUser
+	}
+	// Typed in the tab's login form: use these instead of the saved ones.
+	if u := optStr(p, "username"); u != nil {
+		plain = strings.TrimSpace(*u)
+		ep.user = plain
+		if ep.m.Mode != "direct" {
+			b := e.data.Bastion
+			b.PrimaryUser = plain
+			ep.user = bastionLogin(b, ep.m.Target)
+		}
+		ep.password = ""
+		if pw := optStr(p, "password"); pw != nil {
+			ep.password = *pw
+		}
+	}
+	res := WebRdpSession{Mode: ep.m.Mode, LoginUser: plain}
+	if plain == "" || ep.password == "" {
+		res.NeedsLogin = true // the tab asks for user name and password
+		return res, false, nil
+	}
+	res.Destination = fmt.Sprintf("%s:%d", ep.host, ep.port)
+	if res.Proxy, res.Token, err = e.app.relay.grant(res.Destination); err != nil {
 		return nil, false, err
 	}
-	domain, user := splitDomain(ep.user)
-	return WebRdpSession{Proxy: proxy, Token: token, Destination: dest, Username: user, Password: ep.password, Domain: domain}, e.touch(ep.m.ID), nil
+	res.Domain, res.Username = splitDomain(ep.user)
+	res.Password = ep.password
+	return res, e.touch(ep.m.ID), nil
+}
+
+// rememberLogin saves what was typed in a tab's login form: the bastion login,
+// or a machine login (reused when one with that user name exists) assigned to the machine.
+func (e *rdpEngine) rememberLogin(p map[string]json.RawMessage) (any, bool, error) {
+	d := &e.data
+	user, password, mode, id := strings.TrimSpace(str(p, "username")), str(p, "password"), str(p, "mode"), str(p, "machineId")
+	if user == "" {
+		return nil, false, errors.New("enter a user name")
+	}
+	if mode != "direct" {
+		d.Bastion.PrimaryUser = user
+		if err := setNamedSecret("rdp:bastion", password); err != nil {
+			return nil, false, err
+		}
+		return nil, true, nil
+	}
+	var cred *rdpCredential
+	for i := range d.Credentials {
+		if strings.EqualFold(d.Credentials[i].Username, user) {
+			cred = &d.Credentials[i]
+		}
+	}
+	if cred == nil {
+		d.Credentials = append(d.Credentials, rdpCredential{ID: newID(), Name: user, Username: user})
+		cred = &d.Credentials[len(d.Credentials)-1]
+	}
+	if err := setNamedSecret("rdp:cred:"+cred.ID, password); err != nil {
+		return nil, false, err
+	}
+	cred.HasPassword = password != ""
+	if !e.hasCredential(d.DefaultCredentialID) {
+		d.DefaultCredentialID = cred.ID
+	}
+	for i := range d.Machines {
+		if d.Machines[i].ID == id {
+			cid := cred.ID
+			d.Machines[i].CredentialID = &cid
+		}
+	}
+	return nil, true, nil
 }
 
 // touch records a connection as the machine's last use.

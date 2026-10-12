@@ -2873,3 +2873,98 @@ body.tab-dragging * {
   height: 100%;
   outline: none;
 }
+
+.web-rdp-host {
+  overflow: hidden;
+}
+.web-rdp-host iron-remote-desktop canvas {
+  max-width: 100%;
+  max-height: 100%;
+}
+.rdp-login {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 360px;
+  max-width: calc(100% - 32px);
+  padding: 20px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  text-align: left;
+}
+.rdp-login-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rdp-login-ico {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.rdp-login .rdp-card-title {
+  font-size: 15px;
+}
+.rdp-login .row-btns {
+  margin: 4px 0 0;
+}
+
+/* update available */
+.update-banner {
+  position: fixed;
+  right: 18px;
+  bottom: 40px;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  animation: pop 0.14s ease-out;
+}
+.update-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-ico {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: #0a0d12;
+  background: linear-gradient(135deg, #7aa2f7, #bb9af7);
+}
+.update-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.update-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.update-progress .transfer-bar {
+  width: 100%;
+}
+.update-banner .row-btns {
+  margin: 0;
+}

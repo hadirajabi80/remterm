@@ -32,7 +32,7 @@ function LoginSelect(props: { value: string; onChange(v: string): void; data: Rd
           {credLabel(c)}
         </option>
       ))}
-      {props.allowNone !== false && <option value={NO_CREDENTIAL}>None — I type it myself</option>}
+      {props.allowNone !== false && <option value={NO_CREDENTIAL}>Ask me when connecting</option>}
     </select>
   );
 }
@@ -422,11 +422,11 @@ export function RdpSettingsDialog(props: { data: RdpData; tab?: RdpSettingsTab; 
               <input className="input mono" type="number" min={1} max={65535} value={b.port} onChange={(e) => setb('port', Number(e.target.value))} />
             </label>
             <label className="field">
-              Primary login
+              Bastion user name
               <input className="input" value={b.primaryUser} onChange={(e) => setb('primaryUser', e.target.value)} />
             </label>
             <label className="field">
-              Primary password
+              Bastion password <span className="hint">— optional, asked when connecting</span>
               <PasswordInput value={primaryPassword} onChange={setPrimaryPassword} saved={b.hasPassword} />
             </label>
             <label className="field">

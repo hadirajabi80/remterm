@@ -18,7 +18,7 @@ export CGO_ENABLED=1 MACOSX_DEPLOYMENT_TARGET=11.0
 for arch in arm64 amd64; do
   carch=$([ "$arch" = amd64 ] && echo x86_64 || echo arm64)
   GOOS=darwin GOARCH=$arch CC="clang -arch $carch" CGO_CFLAGS="-arch $carch" CGO_LDFLAGS="-arch $carch -framework UniformTypeIdentifiers" \
-    go build -tags desktop,production -trimpath -ldflags "-s -w" -o "$OUT/remterm-$arch" .
+    go build -tags desktop,production -trimpath -ldflags "-s -w -X main.appVersion=$VERSION" -o "$OUT/remterm-$arch" .
 done
 lipo -create -output "$APP/Contents/MacOS/Remterm" "$OUT/remterm-arm64" "$OUT/remterm-amd64"
 rm "$OUT/remterm-arm64" "$OUT/remterm-amd64"

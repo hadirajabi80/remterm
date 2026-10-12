@@ -9,7 +9,7 @@
 // Termora / Remora apps that Remterm replaces (their data is kept).
 //
 // Build with build.ps1 -Installer (it puts the gzipped exes into payload/).
-// `RemtermSetup.exe /S` installs silently; add /classic for the full menu.
+// `RemtermSetup.exe /S` installs silently; add /classic for the full menu and /run to start Remterm after.
 package main
 
 import (
@@ -46,13 +46,15 @@ const (
 var programs = []string{"Remterm.exe", "RemtermRdp.exe"}
 
 func main() {
-	silent, classic := false, false
+	silent, classic, run := false, false, false
 	for _, a := range os.Args[1:] {
 		switch strings.ToLower(a) {
 		case "/s", "--silent":
 			silent = true
 		case "/classic", "--classic-menu":
 			classic = true
+		case "/run": // Remterm's own updater: start the new version afterwards
+			run = true
 		}
 	}
 	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Remterm")
@@ -115,6 +117,9 @@ func main() {
 		}
 	}
 
+	if run {
+		time.Sleep(1500 * time.Millisecond) // let the updating Remterm quit
+	}
 	wasRunning, err := install(dir)
 	if err != nil {
 		if !silent {
@@ -129,6 +134,11 @@ func main() {
 		}
 	}
 	if silent {
+		if run {
+			cmd := exec.Command(filepath.Join(dir, "Remterm.exe"))
+			cmd.Dir = dir
+			_ = cmd.Start()
+		}
 		return
 	}
 

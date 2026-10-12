@@ -240,7 +240,9 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
             </button>
             <button className={`setup-step ${data.credentials.length ? 'done' : ''}`} onClick={ctx.logins}>
               <span className="setup-num">{data.credentials.length ? <Icon name="check" size={11} /> : '2'}</span>
-              <span>Machine logins (step 2)</span>
+              <span>
+                Machine logins <span className="hint">(optional — asked when connecting)</span>
+              </span>
             </button>
             <button className={`setup-step ${machines.length ? 'done' : ''}`} onClick={ctx.importList}>
               <span className="setup-num">{machines.length ? <Icon name="check" size={11} /> : '3'}</span>

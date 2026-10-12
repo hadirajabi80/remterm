@@ -57,6 +57,8 @@ import { WebRdpView, webRdpSessions } from './components/WebRdpView';
 import type { RdpCtx } from './components/RdpPanel';
 import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
 import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
+import { UpdateBanner } from './components/UpdateBanner';
+import type { UpdateInfo } from './api';
 
 type RdpTarget = Extract<PaneTarget, { kind: 'rdp' }>;
 
@@ -160,6 +162,7 @@ export default function App() {
   const [rdpError, setRdpError] = useState('');
   const [rdpDialog, setRdpDialog] = useState<RdpDialogState | null>(null);
   const appLocked = !!rdpStatus?.locked && !rdpStatus.needsPassword;
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   const sessions = useRef(new Map<string, TermSession>());
   const panesRef = useRef(panes);
@@ -229,6 +232,25 @@ export default function App() {
     setKeys(k);
     setTunnels(t);
     setWorkspaces(w);
+  }, []);
+
+  // ---- updates: check GitHub a few seconds after start (Settings can turn it off) ----
+
+  useEffect(() => {
+    let skip = '';
+    try {
+      if (localStorage.getItem('autoUpdate') === 'off') return;
+      skip = localStorage.getItem('skipVersion') ?? '';
+    } catch {
+      /* storage unavailable: check anyway */
+    }
+    const t = window.setTimeout(() => {
+      api
+        .checkUpdate()
+        .then((info) => info.available && info.latest !== skip && setUpdate(info))
+        .catch(() => {});
+    }, 6000);
+    return () => window.clearTimeout(t);
   }, []);
 
   // ---- Remote Desktop: engine status and vault data ----
@@ -1569,6 +1591,10 @@ export default function App() {
           typing={typing}
           onTyping={setTyping}
           shells={shells}
+          onUpdate={(info) => {
+            setAppearanceOpen(false);
+            setUpdate(info);
+          }}
           onRdpSettings={
             rdpData
               ? () => {
@@ -1836,6 +1862,7 @@ export default function App() {
         />
       )}
       {appLocked && <LockScreen onUnlocked={() => void refreshRdp()} />}
+      {update && <UpdateBanner info={update} onClose={() => setUpdate(null)} />}
       {toast && (
         <div key={toast.id} className={`toast ${toast.kind} ${rdpOnScreen ? 'low' : ''}`} role="status">
           {toast.text}

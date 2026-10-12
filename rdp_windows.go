@@ -108,11 +108,15 @@ func (a *App) webRdpDev(method, params string) (string, bool, error) {
 		m["web"] = true
 		out, _ := json.Marshal(m)
 		return string(out), true, nil
+	case "rememberLogin":
+		return "null", true, nil
 	case "webSession":
 		var p struct {
 			Machine struct {
 				IP string `json:"ip"`
 			} `json:"machine"`
+			Username *string `json:"username"`
+			Password string  `json:"password"`
 		}
 		_ = json.Unmarshal([]byte(params), &p)
 		dest := p.Machine.IP
@@ -126,7 +130,15 @@ func (a *App) webRdpDev(method, params string) (string, bool, error) {
 		if err != nil {
 			return "", true, err
 		}
-		out, _ := json.Marshal(WebRdpSession{Proxy: proxy, Token: token, Destination: dest, Username: os.Getenv("REMTERM_RDP_WEB_USER"), Password: os.Getenv("REMTERM_RDP_WEB_PASS")})
+		user, pass := os.Getenv("REMTERM_RDP_WEB_USER"), os.Getenv("REMTERM_RDP_WEB_PASS")
+		if p.Username != nil {
+			user, pass = *p.Username, p.Password
+		}
+		if user == "" || pass == "" {
+			out, _ := json.Marshal(WebRdpSession{NeedsLogin: true, Mode: "direct", LoginUser: user})
+			return string(out), true, nil
+		}
+		out, _ := json.Marshal(WebRdpSession{Mode: "direct", LoginUser: user, Proxy: proxy, Token: token, Destination: dest, Username: user, Password: pass})
 		return string(out), true, nil
 	}
 	return "", false, nil

@@ -51,7 +51,7 @@ try {
         Write-Host "Built $Out\RemtermRdp.exe" -ForegroundColor Green
     }
 
-    Invoke-Step 'go build' { go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui" -o $Out\Remterm.exe . }
+    Invoke-Step 'go build' { go build -tags desktop,production -trimpath -ldflags "-s -w -H windowsgui -X main.appVersion=$Version" -o $Out\Remterm.exe . }
     Write-Host "Built $Out\Remterm.exe" -ForegroundColor Green
 
     if ($Installer) {
