@@ -3,6 +3,8 @@ import { errorMessage } from '../api';
 import { rdp, type OpenRequest } from '../rdp';
 import type { Pane, TabStatus } from '../types';
 import { Icon } from './Icon';
+import ironUiUrl from '@devolutions/iron-remote-desktop/iron-remote-desktop.js?url';
+import ironRdpUrl from '@devolutions/iron-remote-desktop-rdp/iron-remote-desktop-rdp.js?url';
 
 /**
  * Remote Desktop inside the tab without the Windows RDP control (macOS): the
@@ -10,20 +12,47 @@ import { Icon } from './Icon';
  * connects through Remterm's local relay (rdpproxy.go).
  */
 
-type IronModule = { Backend: unknown; displayControl(enable: boolean): unknown };
-let ironLoaded: Promise<IronModule> | null = null;
+// The component sizes itself to its *window*, not its container, so it runs in an
+// iframe exactly the size of the tab: there "the window" is the tab and the remote
+// screen fits it. Both packages are self-contained ES modules (WebAssembly inlined).
+const IRON_UI = new URL(ironUiUrl, location.href).href;
+const IRON_RDP = new URL(ironRdpUrl, location.href).href;
+const FRAME_DOC =
+  '<!doctype html><html><head><meta charset="utf-8"><style>' +
+  'html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0d1117}' +
+  'iron-remote-desktop{display:block;width:100%;height:100%;outline:none}' +
+  '</style></head><body></body></html>';
 
-function loadIron(): Promise<IronModule> {
-  // ~6 MB of WebAssembly: only loaded the first time a session opens.
-  ironLoaded ??= (async () => {
-    await import('@devolutions/iron-remote-desktop'); // registers <iron-remote-desktop>
-    const m = await import('@devolutions/iron-remote-desktop-rdp');
-    await m.init('WARN');
-    return { Backend: m.Backend, displayControl: m.displayControl };
-  })();
-  return ironLoaded;
+/** Loads the component into a new iframe inside `host`; resolves with its window and the RDP module. */
+async function createFrame(host: HTMLElement): Promise<{ frame: HTMLIFrameElement; win: any; iron: any }> {
+  const frame = document.createElement('iframe');
+  frame.className = 'web-rdp-frame';
+  frame.setAttribute('allow', 'clipboard-read; clipboard-write');
+  frame.srcdoc = FRAME_DOC;
+  const loaded = new Promise((r) => frame.addEventListener('load', r, { once: true }));
+  host.appendChild(frame);
+  await loaded;
+  const win = frame.contentWindow as any;
+  await new Promise<void>((resolve, reject) => {
+    const t = window.setTimeout(() => reject(new Error('The Remote Desktop component did not load.')), 30000);
+    win.addEventListener(
+      'iron-ready',
+      () => {
+        window.clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+    const s = win.document.createElement('script');
+    s.type = 'module';
+    s.textContent =
+      `import ${JSON.stringify(IRON_UI)};` +
+      `import * as rdp from ${JSON.stringify(IRON_RDP)};` +
+      `await rdp.init('WARN'); window.__iron = rdp; window.dispatchEvent(new Event('iron-ready'));`;
+    win.document.head.appendChild(s);
+  });
+  return { frame, win, iron: win.__iron };
 }
-
 /** What App's toolbar and shortcuts can ask a web session to do. */
 export interface WebRdpHandle {
   reconnect(): void;
@@ -89,6 +118,7 @@ export function WebRdpView(props: {
     const el = host.current!;
     let cancelled = false;
     let comp: HTMLElement | null = null;
+    let frame: HTMLIFrameElement | null = null;
     let mode: LoginForm['mode'] = 'direct';
     let loginUser = '';
     props.onStatus('connecting', 'Connecting…');
@@ -104,16 +134,28 @@ export function WebRdpView(props: {
         return;
       }
 
-      const iron = await loadIron();
+      const made = await createFrame(el);
+      frame = made.frame;
       if (cancelled) return;
-      comp = document.createElement('iron-remote-desktop');
+      const { win, iron } = made;
+      // Remterm's Ctrl+Alt shortcuts still work while the session has the keyboard.
+      win.addEventListener(
+        'keydown',
+        (e: KeyboardEvent) => {
+          if ((e.ctrlKey || e.metaKey) && e.altKey && /^(PageUp|PageDown|[1-9]|k|K|l|L|p|P)$/.test(e.key)) {
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: true, shiftKey: e.shiftKey, bubbles: true }));
+          }
+        },
+        true,
+      );
+      comp = win.document.createElement('iron-remote-desktop') as HTMLElement;
       comp.setAttribute('scale', 'fit');
       comp.setAttribute('flexcenter', 'true');
       comp.setAttribute('flexcentre', 'true');
       comp.setAttribute('verbose', 'false');
       (comp as any).module = iron.Backend;
       const ready = new Promise<any>((resolve) => comp!.addEventListener('ready', (e) => resolve((e as CustomEvent).detail.irgUserInteraction), { once: true }));
-      el.appendChild(comp);
+      win.document.body.appendChild(comp);
       const user = await ready;
       if (cancelled) return;
       ui.current = user;
@@ -160,7 +202,7 @@ export function WebRdpView(props: {
         /* already closed */
       }
       ui.current = null;
-      comp?.remove();
+      frame?.remove();
     };
   }, [attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -188,7 +230,11 @@ export function WebRdpView(props: {
     };
   }, [status]);
 
-  const focus = () => (host.current?.querySelector('iron-remote-desktop') as HTMLElement | null)?.focus();
+  const focus = () => {
+    const f = host.current?.querySelector('iframe');
+    f?.focus();
+    (f?.contentDocument?.querySelector('iron-remote-desktop') as HTMLElement | null)?.focus();
+  };
   useEffect(() => {
     if (props.active && status === 'connected') requestAnimationFrame(focus);
   }, [props.active, status]);
