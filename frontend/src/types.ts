@@ -250,6 +250,8 @@ export interface RdpData {
   ocr: boolean;
   /** Sessions open in the system's RDP client (macOS) instead of Remterm tabs. */
   external?: boolean;
+  /** Sessions run inside the tab with IronRDP (macOS) instead of the Windows engine. */
+  web?: boolean;
 }
 
 export interface RdpStatus {
@@ -278,6 +280,7 @@ export interface Pane {
   unread?: boolean; // output arrived while not looking
   rdpMode?: RdpWindowMode; // RDP panes: docked in the tab, own window or fullscreen
   rdpReady?: boolean; // RDP panes: the engine has the session
+  rdpWeb?: boolean; // RDP panes rendered in the page by IronRDP
 }
 
 /** Binary split tree: 'row' = side by side, 'col' = stacked. ratio is the first child's share. */

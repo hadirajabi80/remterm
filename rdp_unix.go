@@ -60,11 +60,11 @@ type rdpBastion struct {
 }
 
 type rdpFile struct {
-	Machines            []rdpMachine     `json:"machines"`
-	Credentials         []rdpCredential  `json:"credentials"`
-	DefaultCredentialID string           `json:"defaultCredentialId"`
-	Bastion             rdpBastion       `json:"bastion"`
-	Settings            json.RawMessage  `json:"settings,omitempty"` // shape owned by the UI (RdpSettings)
+	Machines            []rdpMachine    `json:"machines"`
+	Credentials         []rdpCredential `json:"credentials"`
+	DefaultCredentialID string          `json:"defaultCredentialId"`
+	Bastion             rdpBastion      `json:"bastion"`
+	Settings            json.RawMessage `json:"settings,omitempty"` // shape owned by the UI (RdpSettings)
 }
 
 type rdpEngine struct {
@@ -75,7 +75,7 @@ type rdpEngine struct {
 	ok   bool
 }
 
-func newRdpEngine(a *App) *rdpEngine          { return &rdpEngine{app: a} }
+func newRdpEngine(a *App) *rdpEngine            { return &rdpEngine{app: a} }
 func (e *rdpEngine) stop()                      {}
 func (e *rdpEngine) connectedSessions() int     { return 0 }
 func (a *App) beforeClose(context.Context) bool { return false }
@@ -89,8 +89,8 @@ type ClassicMenuState struct {
 }
 
 func (a *App) ClassicMenu() ClassicMenuState { return ClassicMenuState{} }
-func (a *App) SetClassicMenu(bool) error   { return errors.New("Windows-only") }
-func (a *App) RestartExplorer() error      { return errors.New("Windows-only") }
+func (a *App) SetClassicMenu(bool) error     { return errors.New("Windows-only") }
+func (a *App) RestartExplorer() error        { return errors.New("Windows-only") }
 
 func defaultRdpSettings() json.RawMessage {
 	return json.RawMessage(`{"autoTypeEnabled":true,"autoFillOnConnect":false,"autoTypeDelayMs":1500,"autoTypeSequence":"{login}{TAB}{password}{ENTER}","autoTypeDetectScreen":true,"sessionUsesScreenSize":true,"colorDepth":32,"smartSizing":true,"dynamicResize":true,"redirectClipboard":true,"redirectDrives":false,"playAudioLocally":true,"windowsKeysToRemote":false,"forceUsKeyboard":false,"confirmCloseConnected":true,"autoLockMinutes":0,"sidebarWidth":290,"diagEnabled":false,"startFullscreen":false}`)
@@ -193,7 +193,7 @@ func (e *rdpEngine) call(method string, p map[string]json.RawMessage) (any, bool
 		return map[string]any{
 			"machines": nonNil(d.Machines), "credentials": nonNil(d.Credentials), "defaultCredentialId": def,
 			"bastion": b, "settings": d.Settings, "hasMaster": false, "vaultPath": e.path,
-			"diagEnabled": false, "ocr": false, "external": true,
+			"diagEnabled": false, "ocr": false, "external": true, "web": true,
 		}, false, nil
 
 	case "saveMachine":
@@ -363,6 +363,8 @@ func (e *rdpEngine) call(method string, p map[string]json.RawMessage) (any, bool
 
 	case "launch":
 		return e.launch(p)
+	case "webSession":
+		return e.webSession(p)
 	case "openDiag", "bounds", "focus", "clip", "dock", "fill", "fullscreen", "popout", "reconnect", "disconnect", "close":
 		return nil, false, nil
 	case "connectedCount":
@@ -420,8 +422,25 @@ func bastionLogin(b rdpBastion, target string) string {
 	return strings.Trim(s, ":")
 }
 
-// launch writes a .rdp file and opens it with the system's RDP client.
-func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
+// rdpEndpoint is where and as whom a machine is reached.
+type rdpEndpoint struct {
+	m              rdpMachine
+	host           string
+	port           int
+	user, password string
+	which          string // which password: "bastion" or "login"
+	settings       struct {
+		SessionUsesScreenSize bool `json:"sessionUsesScreenSize"`
+		RedirectClipboard     bool `json:"redirectClipboard"`
+		RedirectDrives        bool `json:"redirectDrives"`
+		PlayAudioLocally      bool `json:"playAudioLocally"`
+		WindowsKeysToRemote   bool `json:"windowsKeysToRemote"`
+		ColorDepth            int  `json:"colorDepth"`
+	}
+}
+
+// endpoint resolves a machine (saved, WALLIX list, or typed address): bastion or direct, login and password.
+func (e *rdpEngine) endpoint(p map[string]json.RawMessage) (ep rdpEndpoint, err error) {
 	d := &e.data
 	var m rdpMachine
 	switch {
@@ -436,26 +455,18 @@ func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
 			}
 		}
 		if !found {
-			return nil, false, errors.New("that machine was deleted")
+			return ep, errors.New("that machine was deleted")
 		}
 	default:
 		if err := json.Unmarshal(p["machine"], &m); err != nil {
-			return nil, false, err
+			return ep, err
 		}
 		if m.Mode == "" {
 			m.Mode = "direct"
 		}
 	}
 
-	var settings struct {
-		SessionUsesScreenSize bool `json:"sessionUsesScreenSize"`
-		RedirectClipboard     bool `json:"redirectClipboard"`
-		RedirectDrives        bool `json:"redirectDrives"`
-		PlayAudioLocally      bool `json:"playAudioLocally"`
-		WindowsKeysToRemote   bool `json:"windowsKeysToRemote"`
-		ColorDepth            int  `json:"colorDepth"`
-	}
-	_ = json.Unmarshal(d.Settings, &settings)
+	_ = json.Unmarshal(d.Settings, &ep.settings)
 
 	var host, user, password, which string
 	port := 3389
@@ -470,14 +481,56 @@ func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
 		}
 	} else {
 		if strings.TrimSpace(d.Bastion.Host) == "" {
-			return nil, false, errors.New("BASTION: Enter the WALLIX bastion address first (Remote Desktop settings).")
+			return ep, errors.New("BASTION: Enter the WALLIX bastion address first (Remote Desktop settings).")
 		}
 		host, port = d.Bastion.Host, d.Bastion.Port
 		user, password, which = bastionLogin(d.Bastion, m.Target), getNamedSecret("rdp:bastion"), "bastion"
 	}
 	if host == "" {
-		return nil, false, errors.New("this machine has no address")
+		return ep, errors.New("this machine has no address")
 	}
+	ep.m, ep.host, ep.port, ep.user, ep.password, ep.which = m, host, port, user, password, which
+	return ep, nil
+}
+
+// webSession prepares an in-tab session: the page's IronRDP connects through Remterm's relay.
+func (e *rdpEngine) webSession(p map[string]json.RawMessage) (any, bool, error) {
+	ep, err := e.endpoint(p)
+	if err != nil {
+		return nil, false, err
+	}
+	dest := fmt.Sprintf("%s:%d", ep.host, ep.port)
+	proxy, token, err := e.app.relay.grant(dest)
+	if err != nil {
+		return nil, false, err
+	}
+	domain, user := splitDomain(ep.user)
+	return WebRdpSession{Proxy: proxy, Token: token, Destination: dest, Username: user, Password: ep.password, Domain: domain}, e.touch(ep.m.ID), nil
+}
+
+// touch records a connection as the machine's last use.
+func (e *rdpEngine) touch(id string) bool {
+	if id == "" {
+		return false
+	}
+	now := time.Now().Format(time.RFC3339)
+	for i := range e.data.Machines {
+		if e.data.Machines[i].ID == id {
+			e.data.Machines[i].LastUsed = &now
+			return true
+		}
+	}
+	return false
+}
+
+// launch writes a .rdp file and opens it with the system's RDP client.
+func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
+	d := &e.data
+	ep, err := e.endpoint(p)
+	if err != nil {
+		return nil, false, err
+	}
+	m, host, port, user, password, which, settings := ep.m, ep.host, ep.port, ep.user, ep.password, ep.which, ep.settings
 
 	b2i := map[bool]int{true: 1, false: 0}
 	screen := 1

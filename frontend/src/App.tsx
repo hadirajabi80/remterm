@@ -53,6 +53,7 @@ import {
 } from './components/VaultDialogs';
 import { Welcome } from './components/Welcome';
 import { RdpView } from './components/RdpView';
+import { WebRdpView, webRdpSessions } from './components/WebRdpView';
 import type { RdpCtx } from './components/RdpPanel';
 import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
 import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
@@ -400,6 +401,7 @@ export default function App() {
       sessions.current.set(key, session);
     }
     const isRdp = target.kind === 'rdp';
+    const web = isRdp && !!rdpDataRef.current?.web;
     setPanes((prev) => ({
       ...prev,
       [key]: {
@@ -407,10 +409,10 @@ export default function App() {
         target,
         ...info,
         status: isTerminal(target) || isRdp ? 'connecting' : 'connected',
-        ...(isRdp ? { message: 'Starting Remote Desktop…', rdpMode: 'docked' as const, rdpReady: false } : {}),
+        ...(isRdp ? { message: 'Starting Remote Desktop…', rdpMode: 'docked' as const, rdpReady: web, rdpWeb: web } : {}),
       },
     }));
-    if (target.kind === 'rdp') void openRdp(key, target);
+    if (target.kind === 'rdp' && !web) void openRdp(key, target);
     return key;
   };
 
@@ -508,7 +510,7 @@ export default function App() {
     for (const k of keys) {
       sessions.current.get(k)?.dispose();
       sessions.current.delete(k);
-      if (panesRef.current[k]?.target.kind === 'rdp') void rdp.close(k).catch(() => {});
+      if (panesRef.current[k]?.target.kind === 'rdp' && !panesRef.current[k]?.rdpWeb) void rdp.close(k).catch(() => {});
     }
     setPanes((prev) => {
       const next = { ...prev };
@@ -843,7 +845,7 @@ export default function App() {
       setRdpDialog({ kind: 'settings', tab: 'bastion' });
       return;
     }
-    if (d.external) {
+    if (d.external && !d.web) {
       // macOS: the session opens in the system's RDP client.
       rdp
         .launch({ machineId: target.machineId, selector: target.selector, machine: target.adhoc ? { name: target.adhoc.name, ip: target.adhoc.ip, mode: 'direct' } : undefined })
@@ -882,7 +884,15 @@ export default function App() {
     }
   };
 
-  const rdpAction = (action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect', key = activePane?.key) => {
+  const rdpAction = (action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad', key = activePane?.key) => {
+    const web = key ? webRdpSessions.get(key) : undefined;
+    if (key && panesRef.current[key]?.rdpWeb) {
+      if (action === 'reconnect') web?.reconnect();
+      else if (action === 'disconnect') web?.disconnect();
+      else if (action === 'cad') web?.ctrlAltDel();
+      return;
+    }
+    if (action === 'cad') return;
     if (key && panesRef.current[key]?.target.kind === 'rdp') void rdp[action](key).catch((e) => notify(errorMessage(e), 'error'));
   };
 
@@ -1178,6 +1188,22 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (overlayOpen) return;
       const ctrl = e.ctrlKey || e.metaKey;
+      // Keys typed in an in-tab RDP session belong to the remote machine, except Remterm's Ctrl+Alt ones.
+      const inRdp = !!(e.target as HTMLElement | null)?.closest?.('.web-rdp');
+      if (inRdp && !(ctrl && e.altKey)) return;
+      if (ctrl && e.altKey && !e.shiftKey && (e.key === 'PageDown' || e.key === 'PageUp')) {
+        e.preventDefault();
+        e.stopPropagation();
+        cycleTab(e.key === 'PageDown' ? 1 : -1);
+        return;
+      }
+      if (inRdp && ctrl && e.altKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const t = tabs[Number(e.key) - 1];
+        if (t) setActiveKey(t.key);
+        return;
+      }
       const k = e.key.toLowerCase();
       const altShift = e.altKey && e.shiftKey && !ctrl;
       let handled = true;
@@ -1430,6 +1456,17 @@ export default function App() {
 
   const renderPane = (pane: Pane, active: boolean, shown: boolean) => {
     const t = pane.target;
+    if (t.kind === 'rdp' && pane.rdpWeb)
+      return (
+        <WebRdpView
+          id={pane.key}
+          pane={pane}
+          request={{ machineId: t.machineId, selector: t.selector, machine: t.adhoc ? { name: t.adhoc.name, ip: t.adhoc.ip, mode: 'direct' } : undefined }}
+          active={active && shown}
+          onStatus={(status, message) => patchPane(pane.key, { status, ...(message !== undefined ? { message } : {}) })}
+          onClose={() => closePane(pane.key)}
+        />
+      );
     if (t.kind === 'rdp')
       return (
         <RdpView
@@ -1467,7 +1504,7 @@ export default function App() {
           onClose={requestCloseTab}
           onNewSsh={() => setPaletteOpen(true)}
           onNewRdp={rdpAvailable ? () => (rdpData ? setPaletteOpen(true) : showRdpPanel()) : undefined}
-          rdp={activeRdp ? { connected: activeRdp.status === 'connected', mode: activeRdp.rdpMode ?? 'docked' } : null}
+          rdp={activeRdp ? { connected: activeRdp.status === 'connected', mode: activeRdp.rdpMode ?? 'docked', web: !!activeRdp.rdpWeb } : null}
           onRdp={(a) => rdpAction(a)}
           onNewLocal={(id) => openLocal(id)}
           onSplit={(d) => split(d)}

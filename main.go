@@ -23,6 +23,10 @@ func main() {
 		return
 	}
 	app := NewApp()
+	instance := "remterm-7c41f0d2-single-instance"
+	if v := os.Getenv("REMTERM_INSTANCE"); v != "" { // developers: run a test copy next to the installed one
+		instance += "-" + v
+	}
 	app.launch.cwd = cwdFromArgs(args)
 
 	err := wails.Run(&options.App{
@@ -39,7 +43,7 @@ func main() {
 		Bind:             []interface{}{app},
 		// A second launch (e.g. Explorer's "Open in Remterm") opens a tab here.
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "remterm-7c41f0d2-single-instance",
+			UniqueId:               instance,
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
 		// Files dragged in from Explorer go to SFTP panes (upload) or terminals (paste path).

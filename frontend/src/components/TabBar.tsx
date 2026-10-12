@@ -34,8 +34,8 @@ export function TabBar(props: {
   onNewSsh(): void;
   onNewRdp?(): void;
   /** Tools for the active Remote Desktop pane (null when the active pane is not RDP). */
-  rdp: { connected: boolean; mode: string } | null;
-  onRdp(action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect'): void;
+  rdp: { connected: boolean; mode: string; web?: boolean } | null;
+  onRdp(action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad'): void;
   onNewLocal(shellId: string): void;
   onSplit(dir: 'row' | 'col'): void;
   onToggleZoom(): void;
@@ -117,7 +117,22 @@ export function TabBar(props: {
 
       <div className="tabbar-spacer" />
 
-      {props.rdp && (
+      {props.rdp?.web && (
+        <div className="tool-group">
+          <button className="icon-btn" title="Send Ctrl+Alt+Del" disabled={!props.rdp.connected} onClick={() => props.onRdp('cad')}>
+            <Icon name="keyboard" />
+          </button>
+          <button className="icon-btn" title="Reconnect" onClick={() => props.onRdp('reconnect')}>
+            <Icon name="refresh" />
+          </button>
+          {props.rdp.connected && (
+            <button className="icon-btn" title="Disconnect" onClick={() => props.onRdp('disconnect')}>
+              <Icon name="plug" />
+            </button>
+          )}
+        </div>
+      )}
+      {props.rdp && !props.rdp.web && (
         <div className="tool-group">
           <button className="icon-btn" title="Fill a saved login on the current screen (Ctrl+Alt+K)" disabled={!props.rdp.connected} onClick={() => props.onRdp('fill')}>
             <Icon name="keyboard" />

@@ -35,6 +35,9 @@ export const rdp = {
   setMasterPassword: (current: string, password: string) => call<RdpStatus>('setMasterPassword', { current, password }),
   openDiag: () => call<void>('openDiag'),
 
+  /** In-tab session through IronRDP: where to connect (Remterm's relay) and as whom. */
+  webSession: (req: Omit<OpenRequest, 'id'>) =>
+    call<{ proxy: string; token: string; destination: string; username: string; password: string; domain: string }>('webSession', req),
   /** macOS: open the machine in the system's RDP client (password goes to the clipboard). */
   launch: (req: Omit<OpenRequest, 'id'>) => call<{ message: string }>('launch', req),
   open: (req: OpenRequest) => call<{ title: string; tooltip: string; machineId: string }>('open', req),

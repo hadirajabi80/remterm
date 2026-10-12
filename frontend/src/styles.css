@@ -2862,3 +2862,14 @@ body.tab-dragging * {
   cursor: grabbing !important;
   user-select: none;
 }
+/* in-tab Remote Desktop rendered by IronRDP (macOS) */
+.web-rdp-host {
+  position: absolute;
+  inset: 0;
+}
+.web-rdp-host iron-remote-desktop {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}

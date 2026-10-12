@@ -28,6 +28,7 @@ type App struct {
 	tunnels  tunnelManager
 	files    fileManager
 	rdp      *rdpEngine
+	relay    rdpRelay // in-tab Remote Desktop through IronRDP (macOS)
 }
 
 func NewApp() *App {

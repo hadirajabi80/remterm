@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,6 +79,11 @@ func (a *App) RdpCall(method, params string) (string, error) {
 	if params == "" {
 		params = "{}"
 	}
+	if os.Getenv("REMTERM_RDP_WEB") == "1" { // developer switch: try the macOS in-tab engine (IronRDP) here
+		if res, ok, err := a.webRdpDev(method, params); ok {
+			return res, err
+		}
+	}
 	timeout := 30 * time.Second
 	if method == "fill" || method == "close" {
 		timeout = 10 * time.Minute // the login picker waits for the user
@@ -87,6 +93,43 @@ func (a *App) RdpCall(method, params string) (string, error) {
 		return "", err
 	}
 	return string(res), nil
+}
+
+// webRdpDev serves the IronRDP path on Windows for testing: typed addresses only (no vault access).
+func (a *App) webRdpDev(method, params string) (string, bool, error) {
+	switch method {
+	case "data":
+		res, err := a.rdp.call("data", json.RawMessage("{}"), 30*time.Second)
+		if err != nil {
+			return "", true, err
+		}
+		var m map[string]any
+		_ = json.Unmarshal(res, &m)
+		m["web"] = true
+		out, _ := json.Marshal(m)
+		return string(out), true, nil
+	case "webSession":
+		var p struct {
+			Machine struct {
+				IP string `json:"ip"`
+			} `json:"machine"`
+		}
+		_ = json.Unmarshal([]byte(params), &p)
+		dest := p.Machine.IP
+		if dest == "" {
+			return "", true, errors.New("developer mode: only typed addresses")
+		}
+		if !strings.Contains(dest, ":") {
+			dest += ":3389"
+		}
+		proxy, token, err := a.relay.grant(dest)
+		if err != nil {
+			return "", true, err
+		}
+		out, _ := json.Marshal(WebRdpSession{Proxy: proxy, Token: token, Destination: dest, Username: os.Getenv("REMTERM_RDP_WEB_USER"), Password: os.Getenv("REMTERM_RDP_WEB_PASS")})
+		return string(out), true, nil
+	}
+	return "", false, nil
 }
 
 // ensure starts the engine once and waits until it said hello.
