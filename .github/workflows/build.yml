@@ -1,0 +1,53 @@
+name: Build
+
+# macOS apps can only be built on a Mac: this builds Remterm.app (universal) and the
+# .dmg on GitHub's macOS runners. On a published release the .dmg is attached to it;
+# "Run workflow" builds one to download from the run's artifacts.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version shown in the app
+        default: dev
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Remterm.app + dmg
+        run: |
+          VERSION="${{ github.event.release.tag_name || inputs.version }}"
+          chmod +x build-macos.sh
+          ./build-macos.sh "${VERSION#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remterm-macOS
+          path: build/macos/*.dmg
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" build/macos/*.dmg --clobber

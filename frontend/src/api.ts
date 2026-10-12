@@ -64,6 +64,7 @@ export const api = {
   listShells: () => call<LocalShell[] | null>('ListShells').then((r) => r ?? []),
   openLocal: (req: { sessionId: string; shellId: string; cwd?: string; cols: number; rows: number }) => call<void>('OpenLocal', req),
   takeLaunchFolder: () => call<string>('TakeLaunchFolder'),
+  platform: () => call<string>('Platform'),
   explorerMenuEnabled: () => call<boolean>('ExplorerMenuEnabled'),
   setExplorerMenu: (enable: boolean) => call<void>('SetExplorerMenu', enable),
   classicMenu: () => call<{ supported: boolean; enabled: boolean }>('ClassicMenu'),

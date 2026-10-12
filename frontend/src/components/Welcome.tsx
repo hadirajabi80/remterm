@@ -33,6 +33,7 @@ export function Welcome(props: {
   hosts: Host[];
   shells: LocalShell[];
   machines: Machine[] | null; // null: Remote Desktop not available / not unlocked
+  rdpExternal?: boolean; // sessions open in the system's RDP client (macOS)
   onLocal(shellId: string): void;
   onConnect(h: Host): void;
   onQuickConnect(spec: string): void;
@@ -175,7 +176,7 @@ export function Welcome(props: {
             </div>
           ))}
         </div>
-        {props.machines && (
+        {props.machines && !props.rdpExternal && (
           <>
             <div className="section-title">
               <span>Inside a Remote Desktop session</span>

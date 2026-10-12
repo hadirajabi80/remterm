@@ -5,10 +5,15 @@ go 1.26.4
 require (
 	github.com/Microsoft/go-winio v0.6.3
 	github.com/UserExistsError/conpty v0.1.4
+	github.com/creack/pty v1.1.24
+	github.com/pkg/sftp v1.13.11
 	github.com/tc-hib/winres v0.3.1
 	github.com/wailsapp/wails/v2 v2.16.0
 	github.com/zalando/go-keyring v0.2.8
+	go.bug.st/serial v1.8.0
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.61.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -32,7 +37,6 @@ require (
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pkg/sftp v1.13.11 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
@@ -40,9 +44,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	go.bug.st/serial v1.8.0 // indirect
 	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )

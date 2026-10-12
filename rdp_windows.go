@@ -380,8 +380,6 @@ func (a *App) beforeClose(ctx context.Context) bool {
 
 // ---- Win32 ----
 
-const mainWindowClass = "RemtermWindow"
-
 var (
 	user32                       = windows.NewLazySystemDLL("user32.dll")
 	procFindWindowExW            = user32.NewProc("FindWindowExW")

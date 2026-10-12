@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -72,6 +73,9 @@ func (a *App) shutdown(context.Context) {
 		a.closeSession(s, "Application closed", false, -1)
 	}
 }
+
+// Platform is the OS Remterm runs on ("windows", "darwin", "linux").
+func (a *App) Platform() string { return runtime.GOOS }
 
 // ---- Hosts ----
 

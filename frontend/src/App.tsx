@@ -843,6 +843,21 @@ export default function App() {
       setRdpDialog({ kind: 'settings', tab: 'bastion' });
       return;
     }
+    if (d.external) {
+      // macOS: the session opens in the system's RDP client.
+      rdp
+        .launch({ machineId: target.machineId, selector: target.selector, machine: target.adhoc ? { name: target.adhoc.name, ip: target.adhoc.ip, mode: 'direct' } : undefined })
+        .then((r) => {
+          notify(r.message);
+          void refreshRdp();
+        })
+        .catch((e) => {
+          const msg = errorMessage(e);
+          if (msg.startsWith('BASTION:')) setRdpDialog({ kind: 'settings', tab: 'bastion' });
+          notify(rdpErrorText(msg), 'error');
+        });
+      return;
+    }
     if (inSplit) split('auto', target);
     else openTab(target);
   };
@@ -1476,6 +1491,7 @@ export default function App() {
               hosts={hosts}
               shells={shells}
               machines={rdpAvailable && rdpData ? rdpData.machines : null}
+              rdpExternal={!!rdpData?.external}
               onLocal={(id) => openLocal(id)}
               onConnect={(h) => openTab({ kind: 'ssh', hostId: h.id })}
               onQuickConnect={(spec) => openTab({ kind: 'ssh', spec })}

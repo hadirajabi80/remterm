@@ -139,5 +139,6 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
       classic = on;
     },
     RestartExplorer: async () => {},
+    Platform: async () => 'windows',
   };
 }

@@ -390,7 +390,9 @@ export function RdpSettingsDialog(props: { data: RdpData; tab?: RdpSettingsTab; 
             ['display', 'Display & devices'],
             ['security', 'Security'],
           ] as [RdpSettingsTab, string][]
-        ).map(([id, label]) => (
+        )
+          .filter(([id]) => !(props.data.external && id === 'security'))
+          .map(([id, label]) => (
           <button key={id} type="button" role="tab" className={tab === id ? 'on' : ''} onClick={() => setTab(id)}>
             {label}
           </button>
@@ -474,19 +476,28 @@ export function RdpSettingsDialog(props: { data: RdpData; tab?: RdpSettingsTab; 
                 <Icon name="key" size={12} /> Edit logins…
               </button>
             </div>
-            {check('autoFillOnConnect', 'Fill automatically after connecting', props.data.ocr
-              ? 'Detects the WALLIX login screens (Windows OCR) and fills the right login. Machines with their own login always auto-fill.'
-              : 'Windows OCR is not available, so screens are detected by color only.')}
-            {check('autoTypeEnabled', 'Type the machine login on “Target Information Required”')}
-            {check('autoTypeDetectScreen', 'Only when a WALLIX login screen is detected')}
-            <label className="field">
-              Delay after connect (ms)
-              <input className="input mono" type="number" min={0} max={30000} step={250} value={s.autoTypeDelayMs} onChange={(e) => sets('autoTypeDelayMs', Number(e.target.value))} />
-            </label>
-            <label className="field">
-              Key sequence <span className="hint">{'{login} {password} {TAB} {ENTER} {DELAY:500}'}</span>
-              <input className="input mono" value={s.autoTypeSequence} onChange={(e) => sets('autoTypeSequence', e.target.value)} />
-            </label>
+            {props.data.external ? (
+              <p className="hint span2" style={{ margin: 0 }}>
+                On this computer sessions open in Microsoft's Windows App: the server and the WALLIX login are filled in and the password is put on the
+                clipboard for ⌘V. Typing logins into the session automatically is part of the Windows version.
+              </p>
+            ) : (
+              <>
+                {check('autoFillOnConnect', 'Fill automatically after connecting', props.data.ocr
+                  ? 'Detects the WALLIX login screens (Windows OCR) and fills the right login. Machines with their own login always auto-fill.'
+                  : 'Windows OCR is not available, so screens are detected by color only.')}
+                {check('autoTypeEnabled', 'Type the machine login on “Target Information Required”')}
+                {check('autoTypeDetectScreen', 'Only when a WALLIX login screen is detected')}
+                <label className="field">
+                  Delay after connect (ms)
+                  <input className="input mono" type="number" min={0} max={30000} step={250} value={s.autoTypeDelayMs} onChange={(e) => sets('autoTypeDelayMs', Number(e.target.value))} />
+                </label>
+                <label className="field">
+                  Key sequence <span className="hint">{'{login} {password} {TAB} {ENTER} {DELAY:500}'}</span>
+                  <input className="input mono" value={s.autoTypeSequence} onChange={(e) => sets('autoTypeSequence', e.target.value)} />
+                </label>
+              </>
+            )}
           </>
         )}
 
@@ -509,12 +520,12 @@ export function RdpSettingsDialog(props: { data: RdpData; tab?: RdpSettingsTab; 
                 ))}
               </select>
             </label>
-            {check('dynamicResize', 'Change the remote resolution when the tab resizes')}
-            {check('smartSizing', 'Smart sizing', 'Scale the picture when the resolution cannot change.')}
+            {!props.data.external && check('dynamicResize', 'Change the remote resolution when the tab resizes')}
+            {!props.data.external && check('smartSizing', 'Smart sizing', 'Scale the picture when the resolution cannot change.')}
             {check('redirectClipboard', 'Share the clipboard', 'Needed for pasting and for filling logins.')}
             {check('redirectDrives', 'Share local drives')}
             {check('playAudioLocally', 'Play remote audio on this PC')}
-            {check('forceUsKeyboard', 'Open sessions with the US keyboard layout', 'Recommended for typing logins.')}
+            {!props.data.external && check('forceUsKeyboard', 'Open sessions with the US keyboard layout', 'Recommended for typing logins.')}
             {check('windowsKeysToRemote', 'Send Windows-key combos (Alt+Tab, Win) to the remote machine', 'Ctrl+Alt shortcuts may stop working inside sessions.')}
           </>
         )}

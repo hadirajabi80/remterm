@@ -71,6 +71,22 @@ func (a *App) TakeLaunchFolder() string {
 	return a.launch.take()
 }
 
+// onFileOpen (macOS) opens a terminal in a folder handed over by Finder:
+// dropped on the Dock icon or sent by the "Open in Remterm" Quick Action.
+func (a *App) onFileOpen(path string) {
+	cwd := cwdFromArgs([]string{path})
+	if cwd == "" {
+		return
+	}
+	if a.ctx == nil {
+		a.launch.mu.Lock()
+		a.launch.cwd = cwd // the UI picks it up when it starts
+		a.launch.mu.Unlock()
+		return
+	}
+	a.emit("launch:open", cwd)
+}
+
 // onSecondInstance runs in the first instance when Remterm is started again
 // (e.g. "Open in Remterm" while it is already open): open a tab there and
 // bring the window forward instead of starting a second window.

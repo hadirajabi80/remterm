@@ -248,6 +248,8 @@ export interface RdpData {
   vaultPath: string;
   diagEnabled: boolean;
   ocr: boolean;
+  /** Sessions open in the system's RDP client (macOS) instead of Remterm tabs. */
+  external?: boolean;
 }
 
 export interface RdpStatus {

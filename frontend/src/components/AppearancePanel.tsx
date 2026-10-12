@@ -31,9 +31,11 @@ export function AppearancePanel(props: {
   const [explorerMenu, setExplorerMenu] = useState<boolean | null>(null);
   const [classic, setClassic] = useState<{ supported: boolean; enabled: boolean } | null>(null);
   const [classicChanged, setClassicChanged] = useState(false);
+  const [platform, setPlatform] = useState('windows');
   useEffect(() => {
     api.explorerMenuEnabled().then(setExplorerMenu).catch(() => setExplorerMenu(false));
     api.classicMenu().then(setClassic).catch(() => setClassic(null));
+    api.platform().then(setPlatform).catch(() => {});
   }, []);
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
@@ -194,6 +196,7 @@ export function AppearancePanel(props: {
               ))}
             </select>
           </label>
+          {platform !== 'linux' && (
           <label className="toggle">
             <input
               type="checkbox"
@@ -210,10 +213,15 @@ export function AppearancePanel(props: {
               }}
             />
             <span>
-              <b>"Open in Remterm" in Explorer</b>
-              <span className="hint">Right-click a folder, a file or empty space in a folder to open a terminal there.</span>
+              <b>"Open in Remterm" in {platform === 'darwin' ? 'Finder' : 'Explorer'}</b>
+              <span className="hint">
+                {platform === 'darwin'
+                  ? 'Right-click a folder → Quick Actions → Open in Remterm. You can also drop a folder on the Dock icon.'
+                  : 'Right-click a folder, a file or empty space in a folder to open a terminal there.'}
+              </span>
             </span>
           </label>
+          )}
           {classic?.supported && (
             <label className="toggle">
               <input

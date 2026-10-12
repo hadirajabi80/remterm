@@ -7,11 +7,15 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// mainWindowClass names the Windows window class; the RDP engine finds the window by it.
+const mainWindowClass = "RemtermWindow"
 
 func main() {
 	args := os.Args[1:]
@@ -42,7 +46,14 @@ func main() {
 		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		Windows: &windows.Options{
 			Theme:           windows.Dark,
-			WindowClassName: mainWindowClass, // the RDP engine finds the window by it
+			WindowClassName: mainWindowClass,
+		},
+		Mac: &mac.Options{
+			TitleBar:   mac.TitleBarDefault(),
+			Appearance: mac.NSAppearanceNameDarkAqua,
+			About:      &mac.AboutInfo{Title: "Remterm", Message: "SSH, Remote Desktop and terminals in one window."},
+			// A folder dropped on the Dock icon or sent by Finder's "Open in Remterm".
+			OnFileOpen: app.onFileOpen,
 		},
 	})
 	if err != nil {

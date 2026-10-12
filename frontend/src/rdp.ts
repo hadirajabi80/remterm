@@ -35,6 +35,8 @@ export const rdp = {
   setMasterPassword: (current: string, password: string) => call<RdpStatus>('setMasterPassword', { current, password }),
   openDiag: () => call<void>('openDiag'),
 
+  /** macOS: open the machine in the system's RDP client (password goes to the clipboard). */
+  launch: (req: Omit<OpenRequest, 'id'>) => call<{ message: string }>('launch', req),
   open: (req: OpenRequest) => call<{ title: string; tooltip: string; machineId: string }>('open', req),
   bounds: (id: string, r: { x: number; y: number; w: number; h: number }, visible: boolean) => call<void>('bounds', { id, ...r, visible }),
   close: (id: string) => call<void>('close', { id }),
