@@ -226,7 +226,7 @@ export class TermSession {
     let result: ConnectResult | null = null;
     try {
       const t = this.target;
-      if (t.kind === 'sftp' || t.kind === 'log') throw new Error('not a terminal');
+      if (t.kind === 'sftp' || t.kind === 'log' || t.kind === 'rdp') throw new Error('not a terminal');
       if (t.kind === 'local') {
         await api.openLocal({
           sessionId: id,

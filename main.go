@@ -22,7 +22,7 @@ func main() {
 	app.launch.cwd = cwdFromArgs(args)
 
 	err := wails.Run(&options.App{
-		Title:            "Termora",
+		Title:            "Remterm",
 		Width:            1320,
 		Height:           820,
 		MinWidth:         820,
@@ -31,16 +31,18 @@ func main() {
 		AssetServer:      &assetserver.Options{Assets: assets},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
+		OnBeforeClose:    app.beforeClose,
 		Bind:             []interface{}{app},
-		// A second launch (e.g. Explorer's "Open in Termora") opens a tab here.
+		// A second launch (e.g. Explorer's "Open in Remterm") opens a tab here.
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "termora-7c41f0d2-single-instance",
+			UniqueId:               "remterm-7c41f0d2-single-instance",
 			OnSecondInstanceLaunch: app.onSecondInstance,
 		},
 		// Files dragged in from Explorer go to SFTP panes (upload) or terminals (paste path).
 		DragAndDrop: &options.DragAndDrop{EnableFileDrop: true, DisableWebViewDrop: true},
 		Windows: &windows.Options{
-			Theme: windows.Dark,
+			Theme:           windows.Dark,
+			WindowClassName: mainWindowClass, // the RDP engine finds the window by it
 		},
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ import { gridLayout, leaves, neighbor, remapLayout, removePane, setRatio, splitP
 import { TermSession, type AuthKind, type TermOptions } from './terminal';
 import { DEFAULT_APPEARANCE, backgroundCss, getScheme } from './themes';
 import { transfers } from './transfers';
+import { lastUsedMs, machineDetail, onRdpEvent, rdp } from './rdp';
 import type {
   Appearance,
   GroupConfig,
@@ -13,10 +14,14 @@ import type {
   Identity,
   KeyItem,
   LocalShell,
+  Machine,
   Pane,
   PaneTarget,
+  RdpData,
+  RdpStatus,
   Snippet,
   Tab,
+  TabStatus,
   Tunnel,
   TunnelStatus,
   Workspace,
@@ -47,6 +52,20 @@ import {
   TunnelDialog,
 } from './components/VaultDialogs';
 import { Welcome } from './components/Welcome';
+import { RdpView } from './components/RdpView';
+import type { RdpCtx } from './components/RdpPanel';
+import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
+
+type RdpTarget = Extract<PaneTarget, { kind: 'rdp' }>;
+
+type RdpDialogState =
+  | { kind: 'machine'; machine: Machine | null; group?: string }
+  | { kind: 'logins' }
+  | { kind: 'settings'; tab?: RdpSettingsTab }
+  | { kind: 'import' };
+
+const STATUS_RANK: Record<TabStatus, number> = { connected: 3, connecting: 2, reconnecting: 1, disconnected: 0 };
+const rdpErrorText = (msg: string) => msg.replace(/^(BASTION|LOCKED):\s*/, '');
 
 interface AuthRequest {
   kind: AuthKind;
@@ -133,8 +152,18 @@ export default function App() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [typing, setTyping] = useState({ ...typingPrefs });
   const [historyList, setHistoryList] = useState<{ paneKey: string; query: string; anchor: CursorAnchor | null } | null>(null);
+  const [rdpAvailable, setRdpAvailable] = useState(false);
+  const [rdpStatus, setRdpStatus] = useState<RdpStatus | null>(null);
+  const [rdpData, setRdpData] = useState<RdpData | null>(null);
+  const [rdpError, setRdpError] = useState('');
+  const [rdpDialog, setRdpDialog] = useState<RdpDialogState | null>(null);
+  const appLocked = !!rdpStatus?.locked && !rdpStatus.needsPassword;
 
   const sessions = useRef(new Map<string, TermSession>());
+  const panesRef = useRef(panes);
+  panesRef.current = panes;
+  const rdpDataRef = useRef(rdpData);
+  rdpDataRef.current = rdpData;
   // Latest state for callbacks fired from terminal sessions.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -166,7 +195,9 @@ export default function App() {
     auth ||
     paletteOpen ||
     varsRequest ||
-    historyList
+    historyList ||
+    rdpDialog ||
+    appLocked
   );
 
   const notify = useCallback((text: string, kind: Toast['kind'] = 'info') => {
@@ -197,6 +228,37 @@ export default function App() {
     setTunnels(t);
     setWorkspaces(w);
   }, []);
+
+  // ---- Remote Desktop: engine status and vault data ----
+
+  const refreshRdp = useCallback(async () => {
+    try {
+      const st = await rdp.status();
+      setRdpStatus(st);
+      setRdpError('');
+      if (st.ready && !st.locked) setRdpData(await rdp.data());
+    } catch (e) {
+      setRdpError(rdpErrorText(errorMessage(e)));
+    }
+  }, []);
+
+  const rdpEventRef = useRef<(name: string, data: any) => void>(() => {});
+  useEffect(() => {
+    let alive = true;
+    const off = onRdpEvent((name, data) => rdpEventRef.current(name, data));
+    rdp
+      .available()
+      .then((ok) => {
+        if (!alive) return;
+        setRdpAvailable(ok);
+        if (ok) void refreshRdp();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [refreshRdp]);
 
   useEffect(() => {
     refresh().catch((e) => notify(errorMessage(e), 'error'));
@@ -289,6 +351,12 @@ export default function App() {
       return folder ? { title: folder, subtitle: `${name} — ${target.cwd}`, env: '' } : { title: name, subtitle: `${name} (local)`, env: '' };
     }
     if (target.kind === 'log') return { title: `Log · ${target.title}`, subtitle: `Session log — ${target.title}`, env: '' };
+    if (target.kind === 'rdp') {
+      if (target.selector) return { title: 'WALLIX list', subtitle: 'WALLIX selector (bastion)', env: '' };
+      if (target.adhoc) return { title: target.adhoc.name || target.adhoc.ip, subtitle: `${target.adhoc.ip} · direct`, env: '' };
+      const m = rdpDataRef.current?.machines.find((x) => x.id === target.machineId);
+      return { title: m?.name ?? 'Remote Desktop', subtitle: m ? machineDetail(m) : '', env: '' };
+    }
     const host = target.hostId ? hostsRef.current.find((h) => h.id === target.hostId) : undefined;
     if (target.kind === 'sftp') {
       return { title: `SFTP · ${host?.name ?? 'host'}`, subtitle: `SFTP — ${host ? hostLabel(host) : ''}`, env: host?.env ?? '' };
@@ -330,8 +398,43 @@ export default function App() {
       );
       sessions.current.set(key, session);
     }
-    setPanes((prev) => ({ ...prev, [key]: { key, target, ...info, status: isTerminal(target) ? 'connecting' : 'connected' } }));
+    const isRdp = target.kind === 'rdp';
+    setPanes((prev) => ({
+      ...prev,
+      [key]: {
+        key,
+        target,
+        ...info,
+        status: isTerminal(target) || isRdp ? 'connecting' : 'connected',
+        ...(isRdp ? { message: 'Starting Remote Desktop…', rdpMode: 'docked' as const, rdpReady: false } : {}),
+      },
+    }));
+    if (target.kind === 'rdp') void openRdp(key, target);
     return key;
+  };
+
+  /** Asks the engine for the session; its window appears once RdpView reports where. */
+  const openRdp = async (key: string, target: RdpTarget) => {
+    try {
+      const r = await rdp.open({
+        id: key,
+        machineId: target.machineId,
+        selector: target.selector,
+        machine: target.adhoc ? { id: '', name: target.adhoc.name, ip: target.adhoc.ip, mode: 'direct', target: '', group: '', credentialId: null, autoType: 'auto', notes: '' } : undefined,
+      });
+      patchPane(key, { rdpReady: true, title: r.title, message: '' });
+    } catch (e) {
+      const msg = errorMessage(e);
+      patchPane(key, { status: 'disconnected', rdpReady: false, message: rdpErrorText(msg) });
+      if (msg.startsWith('BASTION:')) setRdpDialog({ kind: 'settings', tab: 'bastion' });
+    }
+  };
+
+  const retryRdp = (key: string) => {
+    const p = panesRef.current[key];
+    if (p?.target.kind !== 'rdp') return;
+    patchPane(key, { status: 'connecting', message: 'Starting Remote Desktop…' });
+    void openRdp(key, p.target);
   };
 
   const addTab = (layoutKeys: string[], broadcast = false) => {
@@ -359,7 +462,7 @@ export default function App() {
     openTab({ kind: 'local', shellId, cwd });
   };
 
-  // Opened from Explorer ("Open in Termora") or with a folder argument.
+  // Opened from Explorer ("Open in Remterm") or with a folder argument.
   const launchHandled = useRef(false);
   const openLocalRef = useRef(openLocal);
   openLocalRef.current = openLocal;
@@ -404,6 +507,7 @@ export default function App() {
     for (const k of keys) {
       sessions.current.get(k)?.dispose();
       sessions.current.delete(k);
+      if (panesRef.current[k]?.target.kind === 'rdp') void rdp.close(k).catch(() => {});
     }
     setPanes((prev) => {
       const next = { ...prev };
@@ -444,6 +548,26 @@ export default function App() {
     );
     setFindOpen(false);
   };
+
+  /** Runs `close` after asking, when it would end connected Remote Desktop sessions. */
+  const confirmRdpClose = (keys: string[], close: () => void) => {
+    const live = keys.filter((k) => panesRef.current[k]?.target.kind === 'rdp' && panesRef.current[k]?.status === 'connected');
+    if (!live.length || rdpDataRef.current?.settings.confirmCloseConnected === false) {
+      close();
+      return;
+    }
+    setConfirm({
+      title: 'Disconnect',
+      message: `Disconnect from ${live.map((k) => panesRef.current[k]?.title).join(', ')}?`,
+      confirmLabel: 'Disconnect',
+      run: close,
+    });
+  };
+  const requestCloseTab = (tabKey: string) => {
+    const t = tabsRef.current.find((x) => x.key === tabKey);
+    if (t) confirmRdpClose(leaves(t.layout), () => closeTab(tabKey));
+  };
+  const requestClosePane = (paneKey: string) => confirmRdpClose([paneKey], () => closePane(paneKey));
 
   const broadcast = (fromKey: string, data: string): boolean => {
     const tab = tabOf(fromKey);
@@ -698,6 +822,149 @@ export default function App() {
 
   const changeFont = (delta: number) => setAppearance((a) => ({ ...a, fontSize: Math.max(9, Math.min(32, a.fontSize + delta)) }));
 
+  // ---- Remote Desktop actions ----
+
+  const showRdpPanel = () => {
+    setSidebarOpen(true);
+    setPanel('rdp');
+  };
+
+  const connectRdp = (target: RdpTarget, inSplit = false) => {
+    const d = rdpDataRef.current;
+    if (!d) {
+      showRdpPanel();
+      notify(rdpStatus?.needsPassword ? 'Unlock Remote Desktop first' : rdpError || 'Remote Desktop is still starting…', rdpError ? 'error' : 'info');
+      return;
+    }
+    const m = target.machineId ? d.machines.find((x) => x.id === target.machineId) : undefined;
+    if ((target.selector || m?.mode === 'bastion') && !d.bastion.host.trim()) {
+      notify('Enter the WALLIX bastion address first');
+      setRdpDialog({ kind: 'settings', tab: 'bastion' });
+      return;
+    }
+    if (inSplit) split('auto', target);
+    else openTab(target);
+  };
+
+  const quickRdp = (host: string, inSplit = false) => connectRdp({ kind: 'rdp', adhoc: { name: host, ip: host } }, inSplit);
+
+  const lockRdp = async () => {
+    try {
+      setRdpStatus(await rdp.lock());
+    } catch (e) {
+      notify(rdpErrorText(errorMessage(e)), 'error');
+    }
+  };
+
+  const rdpAction = (action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect', key = activePane?.key) => {
+    if (key && panesRef.current[key]?.target.kind === 'rdp') void rdp[action](key).catch((e) => notify(errorMessage(e), 'error'));
+  };
+
+  // Events from the RDP engine (reassigned every render so it sees fresh state).
+  rdpEventRef.current = (name, d) => {
+    switch (name) {
+      case 'session':
+        patchPane(d.id, { status: d.status, title: d.title, message: d.message, rdpMode: d.mode });
+        break;
+      case 'closed':
+        if (tabOf(d.id)) closePane(d.id);
+        break;
+      case 'closeRequest':
+        closePane(d.id);
+        break;
+      case 'notify':
+        notify(d.text);
+        break;
+      case 'changed':
+      case 'locked':
+        void refreshRdp();
+        break;
+      case 'hotkey': {
+        const k: string = d.key;
+        if (k === 'next') cycleTab(1);
+        else if (k === 'prev') cycleTab(-1);
+        else if (k.startsWith('tab')) {
+          const t = tabsRef.current[Number(k.slice(3)) - 1];
+          if (t) setActiveKey(t.key);
+        } else if (k === 'quick') setPaletteOpen(true);
+        else if (k === 'close') requestClosePane(d.id);
+        else if (k === 'sidebar') setSidebarOpen((v) => !v);
+        else if (k === 'lock') void lockRdp();
+        break;
+      }
+      case 'engine-exit':
+        setPanes((prev) =>
+          Object.fromEntries(
+            Object.entries(prev).map(([k, p]) => [
+              k,
+              p.target.kind === 'rdp' ? { ...p, rdpReady: false, rdpMode: 'docked', status: 'disconnected', message: 'The Remote Desktop engine stopped.' } : p,
+            ]),
+          ),
+        );
+        setRdpData(null);
+        setRdpStatus(null);
+        window.setTimeout(() => void refreshRdp(), 500);
+        break;
+    }
+  };
+
+  const rdpOpenStatus: Record<string, TabStatus> = {};
+  for (const p of Object.values(panes)) {
+    if (p.target.kind !== 'rdp' || !p.target.machineId) continue;
+    const cur = rdpOpenStatus[p.target.machineId];
+    if (!cur || STATUS_RANK[p.status] > STATUS_RANK[cur]) rdpOpenStatus[p.target.machineId] = p.status;
+  }
+
+  const rdpCtx: RdpCtx = {
+    available: rdpAvailable,
+    status: rdpStatus,
+    data: rdpData,
+    error: rdpError,
+    openStatus: rdpOpenStatus,
+    connect: (m, inSplit) => connectRdp({ kind: 'rdp', machineId: m.id }, inSplit),
+    switchTo: (m) => {
+      const p = Object.values(panesRef.current).find((x) => x.target.kind === 'rdp' && x.target.machineId === m.id);
+      if (p) focusPane(p.key);
+    },
+    connectAll: (list) => {
+      const run = () => list.forEach((m) => connectRdp({ kind: 'rdp', machineId: m.id }));
+      if (list.length <= 5) run();
+      else setConfirm({ title: 'Connect all', message: `Open ${list.length} Remote Desktop sessions?`, confirmLabel: `Open ${list.length}`, run });
+    },
+    openSelector: () => connectRdp({ kind: 'rdp', selector: true }),
+    edit: (m, group) => setRdpDialog({ kind: 'machine', machine: m, group }),
+    save: (m) => void rdp.saveMachine(m).then(refreshRdp).catch((e) => notify(errorMessage(e), 'error')),
+    remove: (list, what) =>
+      setConfirm({
+        title: list.length > 1 ? 'Delete machines' : 'Delete machine',
+        message: `Delete ${what}? Saved logins are kept; open sessions stay connected.`,
+        confirmLabel: 'Delete',
+        run: async () => {
+          await rdp.deleteMachines(list.map((m) => m.id));
+          await refreshRdp();
+        },
+      }),
+    renameGroup: (name) =>
+      setPrompt({
+        title: 'Rename group',
+        label: 'Name',
+        initial: name === 'Ungrouped' ? '' : name,
+        confirmLabel: 'Rename',
+        run: async (to) => {
+          await rdp.renameGroup(name, to);
+          await refreshRdp();
+          setPrompt(null);
+        },
+      }),
+    logins: () => setRdpDialog({ kind: 'logins' }),
+    settings: (tab) => setRdpDialog({ kind: 'settings', tab }),
+    importList: () => setRdpDialog({ kind: 'import' }),
+    lock: () => void lockRdp(),
+    refresh: () => void refreshRdp(),
+    notify,
+  };
+  const activeRdp = activePane?.target.kind === 'rdp' ? activePane : undefined;
+
   // ---- global shortcuts (capture phase, so they win over the terminal) ----
 
   useEffect(() => {
@@ -710,9 +977,13 @@ export default function App() {
       if ((ctrl && e.shiftKey && k === 'p') || e.key === 'F1') setPaletteOpen(true);
       else if (ctrl && e.shiftKey && k === 't') setPaletteOpen(true);
       else if (ctrl && e.shiftKey && e.code === 'Backquote') openLocal();
-      else if (ctrl && e.shiftKey && k === 'w') activePane && closePane(activePane.key);
+      else if (ctrl && e.shiftKey && k === 'w') activePane && requestClosePane(activePane.key);
       else if (ctrl && e.shiftKey && k === 'f') activeSession && setFindOpen(true);
-      else if (ctrl && e.shiftKey && k === 'r') activeSession?.reconnect();
+      else if (ctrl && e.shiftKey && k === 'r') (activeRdp ? rdpAction('reconnect') : activeSession?.reconnect());
+      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && k === 'k') rdpAction('fill');
+      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && e.key === 'Enter') rdpAction('fullscreen');
+      else if (ctrl && e.altKey && !e.shiftKey && rdpData && k === 'p') setPaletteOpen(true);
+      else if (ctrl && e.altKey && !e.shiftKey && rdpData?.hasMaster && k === 'l') void lockRdp();
       else if (ctrl && e.shiftKey && k === 'b') setSidebarOpen((v) => !v);
       else if (ctrl && e.shiftKey && k === 'z') toggleZoom();
       else if (ctrl && e.shiftKey && k === 'a') toggleBroadcast();
@@ -753,6 +1024,16 @@ export default function App() {
       keywords: `${h.group} ${(h.tags ?? []).join(' ')}`,
       run: (o) => (o?.split ? split('auto', sshTarget(h)) : openTab(sshTarget(h))),
     }));
+    for (const m of [...(rdpData?.machines ?? [])].sort((a, b) => lastUsedMs(b) - lastUsedMs(a))) {
+      items.push({
+        id: 'r:' + m.id,
+        kind: 'Remote',
+        label: m.name,
+        detail: machineDetail(m),
+        keywords: `${m.group} ${m.ip} rdp remote desktop`,
+        run: (o) => rdpCtx.connect(m, o?.split),
+      });
+    }
     for (const h of hosts.filter((x) => (x.protocol || 'ssh') === 'ssh')) {
       items.push({ id: 'f:' + h.id, kind: 'Connect', label: `SFTP: ${h.name}`, detail: 'Files', env: h.env, run: () => openTab({ kind: 'sftp', hostId: h.id }) });
     }
@@ -797,7 +1078,25 @@ export default function App() {
           { id: 'a:find', kind: 'Action', label: 'Find in terminal', detail: 'Ctrl+Shift+F', run: () => setFindOpen(true) },
         );
       }
-      items.push({ id: 'a:close', kind: 'Action', label: 'Close current pane', detail: 'Ctrl+Shift+W', run: () => activePane && closePane(activePane.key) });
+      if (activeRdp) {
+        items.push(
+          { id: 'a:rdp-fill', kind: 'Action', label: 'Fill a saved login in this session', detail: 'Ctrl+Alt+K', run: () => rdpAction('fill') },
+          { id: 'a:rdp-full', kind: 'Action', label: 'Fullscreen Remote Desktop', detail: 'Ctrl+Alt+Enter', run: () => rdpAction('fullscreen') },
+          { id: 'a:rdp-pop', kind: 'Action', label: 'Open session in its own window', run: () => rdpAction('popout') },
+          { id: 'a:rdp-reconnect', kind: 'Action', label: 'Reconnect Remote Desktop', detail: 'Ctrl+Alt+R', run: () => rdpAction('reconnect') },
+        );
+      }
+      items.push({ id: 'a:close', kind: 'Action', label: 'Close current pane', detail: 'Ctrl+Shift+W', run: () => activePane && requestClosePane(activePane.key) });
+    }
+    if (rdpData) {
+      items.push(
+        { id: 'a:wallix', kind: 'Action', label: 'Open the WALLIX list', run: rdpCtx.openSelector },
+        { id: 'a:new-machine', kind: 'Action', label: 'New Remote Desktop machine…', run: () => rdpCtx.edit(null) },
+        { id: 'a:import-wallix', kind: 'Action', label: 'Import WALLIX list…', run: rdpCtx.importList },
+        { id: 'a:rdp-logins', kind: 'Action', label: 'Remote Desktop logins…', run: rdpCtx.logins },
+        { id: 'a:rdp-settings', kind: 'Action', label: 'Remote Desktop settings (bastion, auto-fill, display)…', run: () => rdpCtx.settings() },
+      );
+      if (rdpData.hasMaster) items.push({ id: 'a:lock', kind: 'Action', label: 'Lock Remterm', detail: 'Ctrl+Alt+L', run: () => void lockRdp() });
     }
     items.push(
       { id: 'a:appearance', kind: 'Action', label: 'Settings: background, colors, font, typing…', detail: 'Ctrl+,', run: () => setAppearanceOpen(true) },
@@ -920,8 +1219,22 @@ export default function App() {
   const schemeBg = getScheme(appearance.scheme).theme.background;
   const prodVisible = activeTab && leaves(activeTab.layout).some((k) => panes[k]?.env === 'prod');
 
-  const renderPane = (pane: Pane) => {
+  const rdpOnScreen = !!activeTab && leaves(activeTab.layout).some((k) => panes[k]?.target.kind === 'rdp');
+
+  const renderPane = (pane: Pane, active: boolean, shown: boolean) => {
     const t = pane.target;
+    if (t.kind === 'rdp')
+      return (
+        <RdpView
+          id={pane.key}
+          pane={pane}
+          shown={shown}
+          active={active}
+          locked={appLocked}
+          onRetry={() => retryRdp(pane.key)}
+          onClose={() => closePane(pane.key)}
+        />
+      );
     if (t.kind === 'sftp') return <SftpView hostId={t.hostId} hosts={hosts} auth={(target, error) => askAuth(target, error)} notify={notify} />;
     if (t.kind === 'log') return <LogView logId={t.logId} theme={getScheme(appearance.scheme).theme} fontSize={appearance.fontSize} notify={notify} />;
     return null;
@@ -929,7 +1242,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {sidebarOpen && <Sidebar ctx={ctx} panel={panel} onPanel={setPanel} />}
+      {sidebarOpen && <Sidebar ctx={ctx} rdp={rdpCtx} panel={panel} onPanel={setPanel} />}
 
       <main className="main">
         <TabBar
@@ -941,8 +1254,11 @@ export default function App() {
           zoomed={!!activeTab?.zoomed}
           broadcast={!!activeTab?.broadcast}
           onSelect={setActiveKey}
-          onClose={closeTab}
+          onClose={requestCloseTab}
           onNewSsh={() => setPaletteOpen(true)}
+          onNewRdp={rdpAvailable ? () => (rdpData ? setPaletteOpen(true) : showRdpPanel()) : undefined}
+          rdp={activeRdp ? { connected: activeRdp.status === 'connected', mode: activeRdp.rdpMode ?? 'docked' } : null}
+          onRdp={(a) => rdpAction(a)}
           onNewLocal={(id) => openLocal(id)}
           onSplit={(d) => split(d)}
           onToggleZoom={toggleZoom}
@@ -966,7 +1282,7 @@ export default function App() {
               sessions={sessions.current}
               onActivate={focusPane}
               onRatio={(splitKey, ratio) => setTabs((prev) => prev.map((x) => (x.key === t.key ? { ...x, layout: setRatio(x.layout, splitKey, ratio) } : x)))}
-              onClosePane={closePane}
+              onClosePane={requestClosePane}
               renderPane={renderPane}
             />
           ))}
@@ -974,11 +1290,15 @@ export default function App() {
             <Welcome
               hosts={hosts}
               shells={shells}
+              machines={rdpAvailable && rdpData ? rdpData.machines : null}
               onLocal={(id) => openLocal(id)}
               onConnect={(h) => openTab({ kind: 'ssh', hostId: h.id })}
               onQuickConnect={(spec) => openTab({ kind: 'ssh', spec })}
+              onQuickRdp={rdpAvailable ? (host) => quickRdp(host) : undefined}
+              onRdp={(m) => rdpCtx.connect(m)}
               onNewHost={() => setEditingHost({ host: null })}
               onImport={() => void runImport(api.importSSHConfig, '~/.ssh/config')}
+              onRdpPanel={showRdpPanel}
             />
           )}
           {findOpen && activeSession && <FindBar key={activePane?.key} session={activeSession} onClose={() => setFindOpen(false)} />}
@@ -994,7 +1314,22 @@ export default function App() {
       </main>
 
       {appearanceOpen && (
-        <AppearancePanel value={appearance} onChange={setAppearance} typing={typing} onTyping={setTyping} shells={shells} onClose={() => setAppearanceOpen(false)} />
+        <AppearancePanel
+          value={appearance}
+          onChange={setAppearance}
+          typing={typing}
+          onTyping={setTyping}
+          shells={shells}
+          onRdpSettings={
+            rdpData
+              ? () => {
+                  setAppearanceOpen(false);
+                  setRdpDialog({ kind: 'settings' });
+                }
+              : undefined
+          }
+          onClose={() => setAppearanceOpen(false)}
+        />
       )}
       {historyList && sessions.current.get(historyList.paneKey) && (
         <HistoryList
@@ -1016,6 +1351,7 @@ export default function App() {
         <CommandPalette
           items={paletteItems}
           onQuickConnect={(spec, inSplit) => (inSplit ? split('auto', { kind: 'ssh', spec }) : openTab({ kind: 'ssh', spec }))}
+          onQuickRdp={rdpAvailable ? (host, inSplit) => quickRdp(host, inSplit) : undefined}
           onClose={() => setPaletteOpen(false)}
         />
       )}
@@ -1214,8 +1550,45 @@ export default function App() {
           }}
         />
       )}
+      {rdpDialog?.kind === 'machine' && rdpData && (
+        <MachineDialog
+          machine={rdpDialog.machine}
+          defaultGroup={rdpDialog.group}
+          data={rdpData}
+          onSaved={(m, connect) => {
+            setRdpDialog(null);
+            void refreshRdp().then(() => connect && connectRdp({ kind: 'rdp', machineId: m.id }));
+          }}
+          onClose={() => setRdpDialog(null)}
+        />
+      )}
+      {rdpDialog?.kind === 'logins' && rdpData && (
+        <LoginsDialog data={rdpData} onChanged={() => void refreshRdp()} onClose={() => setRdpDialog(null)} />
+      )}
+      {rdpDialog?.kind === 'settings' && rdpData && (
+        <RdpSettingsDialog
+          data={rdpData}
+          tab={rdpDialog.tab}
+          onLogins={() => setRdpDialog({ kind: 'logins' })}
+          onChanged={() => void refreshRdp()}
+          onClose={() => setRdpDialog(null)}
+        />
+      )}
+      {rdpDialog?.kind === 'import' && rdpData && (
+        <ImportDialog
+          data={rdpData}
+          onImported={(n) => {
+            setRdpDialog(null);
+            notify(n ? `Imported ${n} machine${n === 1 ? '' : 's'}` : 'No new machines found');
+            showRdpPanel();
+            void refreshRdp();
+          }}
+          onClose={() => setRdpDialog(null)}
+        />
+      )}
+      {appLocked && <LockScreen onUnlocked={() => void refreshRdp()} />}
       {toast && (
-        <div key={toast.id} className={`toast ${toast.kind}`} role="status">
+        <div key={toast.id} className={`toast ${toast.kind} ${rdpOnScreen ? 'low' : ''}`} role="status">
           {toast.text}
         </div>
       )}

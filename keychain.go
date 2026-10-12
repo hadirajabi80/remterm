@@ -84,7 +84,7 @@ func (a *App) GenerateKey(req GenerateKeyRequest) (KeyItem, error) {
 
 	label := strings.TrimSpace(req.Label)
 	if label == "" {
-		label = "termora-" + time.Now().Format("2006-01-02")
+		label = "remterm-" + time.Now().Format("2006-01-02")
 	}
 	var block *pem.Block
 	var err error

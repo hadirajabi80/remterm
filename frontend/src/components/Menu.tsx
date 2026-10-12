@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCover } from '../rdp';
 
 export interface MenuItem {
   label: string;
@@ -23,6 +24,7 @@ export function Menu({
   align?: 'left' | 'right';
   at?: { x: number; y: number };
 }) {
+  useCover();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(at);
 

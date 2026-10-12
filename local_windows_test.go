@@ -21,7 +21,7 @@ func TestLocalShellsRoundTrip(t *testing.T) {
 	}
 	for _, sh := range shells {
 		if sh.ID == "wsl" {
-			continue // may have no distro installed; not a Termora concern
+			continue // may have no distro installed; not a Remterm concern
 		}
 		t.Run(sh.ID, func(t *testing.T) {
 			cpty, err := conpty.Start(sh.Command, conpty.ConPtyDimensions(120, 30))
@@ -45,9 +45,9 @@ func TestLocalShellsRoundTrip(t *testing.T) {
 				}
 			}()
 
-			cmd := "echo termora-ok-42"
+			cmd := "echo remterm-ok-42"
 			if sh.ID == "pwsh" || sh.ID == "powershell" {
-				cmd = "Write-Output ('termora-ok-' + (40+2))"
+				cmd = "Write-Output ('remterm-ok-' + (40+2))"
 			}
 			time.Sleep(1500 * time.Millisecond) // let the shell print its prompt
 			if _, err := cpty.Write([]byte(cmd + "\r")); err != nil {
@@ -56,7 +56,7 @@ func TestLocalShellsRoundTrip(t *testing.T) {
 
 			var got bytes.Buffer
 			deadline := time.After(15 * time.Second)
-			for !strings.Contains(got.String(), "termora-ok-42") {
+			for !strings.Contains(got.String(), "remterm-ok-42") {
 				select {
 				case b, ok := <-out:
 					if !ok {

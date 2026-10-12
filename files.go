@@ -508,7 +508,7 @@ func (a *App) FsOpen(id, p string) error {
 	if err != nil {
 		return err
 	}
-	dir, err := os.MkdirTemp("", "termora-edit-")
+	dir, err := os.MkdirTemp("", "remterm-edit-")
 	if err != nil {
 		return err
 	}

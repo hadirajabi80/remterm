@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    RemtermRdp.exe: the Remote Desktop engine of Remterm. Remterm.exe starts it and talks to it over a
+    named pipe; RDP sessions are native child windows placed inside Remterm's tabs.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RemtermRdp</AssemblyName>
+    <RootNamespace>RemoteHub</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <!-- Must match Remterm's window (per-monitor v2) so embedded sessions are positioned in the same pixels. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <Version>1.0.0</Version>
+    <Product>Remterm</Product>
+    <Description>Remterm Remote Desktop engine</Description>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CA1416;WFO1000</NoWarn>
+  </PropertyGroup>
+
+</Project>

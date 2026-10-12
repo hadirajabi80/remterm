@@ -1,5 +1,6 @@
 import type { ConnectRequest } from './api';
 import type { FileEntry, Host, Snippet } from './types';
+import { createRdpMock } from './mockRdp';
 
 /** Browser-only fake backend: echoes input like a tiny shell. */
 export function installMock() {
@@ -387,4 +388,5 @@ export function installMock() {
       return tid;
     },
   });
+  Object.assign(window.go.main.App, createRdpMock(emit));
 }

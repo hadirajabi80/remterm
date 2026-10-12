@@ -560,7 +560,7 @@ export function TunnelDialog(props: { tunnel: Tunnel | null; hosts: Host[]; onSa
           Start automatically
           <label className="check">
             <input type="checkbox" checked={t.autoStart} onChange={(e) => set('autoStart', e.target.checked)} />
-            With Termora, and reconnect if dropped
+            With Remterm, and reconnect if dropped
           </label>
         </label>
         {t.type === 'remote' && <p className="hint span2">Binding to anything other than 127.0.0.1 on the server needs GatewayPorts yes in its sshd_config.</p>}

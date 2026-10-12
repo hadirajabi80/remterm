@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CursorAnchor } from '../autocomplete';
 import { history } from '../history';
+import { useCover } from '../rdp';
 import { timeAgo } from '../util';
 
 const WIDTH = 620;
@@ -18,6 +19,7 @@ export function HistoryList(props: {
   onPick(command: string, run: boolean): void;
   onClose(): void;
 }) {
+  useCover();
   const [query, setQuery] = useState(props.query);
   const version = useSyncExternalStore(history.subscribe, history.getVersion);
   const items = useMemo(() => history.search(query, props.hostKey), [query, props.hostKey, version]);

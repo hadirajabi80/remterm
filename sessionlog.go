@@ -57,7 +57,7 @@ func openLogStore() *logStore {
 	if b, err := os.ReadFile(filepath.Join(l.dir, "index.json")); err == nil {
 		_ = json.Unmarshal(b, &l.entries)
 	}
-	// Sessions running when Termora quit never got an end time.
+	// Sessions running when Remterm quit never got an end time.
 	for i := range l.entries {
 		if l.entries[i].Ended == 0 {
 			l.entries[i].Ended = l.entries[i].Started

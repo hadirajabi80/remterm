@@ -172,7 +172,94 @@ export type PaneTarget =
   | { kind: 'ssh'; hostId?: string; spec?: string }
   | { kind: 'local'; shellId: string; cwd?: string }
   | { kind: 'sftp'; hostId: string }
-  | { kind: 'log'; logId: string; title: string };
+  | { kind: 'log'; logId: string; title: string }
+  | { kind: 'rdp'; machineId?: string; adhoc?: { name: string; ip: string }; selector?: boolean };
+
+// ---------------- Remote Desktop (served by the RemtermRdp engine) ----------------
+
+export type RdpConnectMode = 'bastion' | 'direct';
+export type RdpAutoType = 'auto' | 'always' | 'never';
+/** credentialId: null = default login, 'none' = never fill. */
+export const NO_CREDENTIAL = 'none';
+
+export interface Machine {
+  id: string;
+  name: string;
+  ip: string; // direct mode may include a port: 10.0.0.5:3390
+  target: string; // WALLIX target, e.g. Interactive@NFCore-172.16.170.221:RDP ('' = WALLIX list)
+  group: string;
+  mode: RdpConnectMode;
+  credentialId: string | null;
+  autoType: RdpAutoType;
+  favorite: boolean;
+  lastUsed: string | null; // ISO time
+  notes: string;
+}
+
+export interface RdpCredential {
+  id: string;
+  name: string;
+  username: string;
+  hasPassword: boolean;
+}
+
+export interface Bastion {
+  host: string;
+  port: number;
+  primaryUser: string;
+  hasPassword: boolean;
+  authorization: string;
+  loginTemplate: string;
+  useNla: boolean;
+  interactiveLoginUsesTarget: boolean;
+  authLevel: number; // 0 pin key on first use, 1 require valid certificate, 2 warn
+}
+
+export interface RdpSettings {
+  defaultCredentialId?: string | null;
+  autoTypeEnabled: boolean;
+  autoFillOnConnect: boolean;
+  autoTypeDelayMs: number;
+  autoTypeSequence: string;
+  autoTypeDetectScreen: boolean;
+  sessionUsesScreenSize: boolean;
+  colorDepth: number;
+  smartSizing: boolean;
+  dynamicResize: boolean;
+  redirectClipboard: boolean;
+  redirectDrives: boolean;
+  playAudioLocally: boolean;
+  windowsKeysToRemote: boolean;
+  forceUsKeyboard: boolean;
+  confirmCloseConnected: boolean;
+  autoLockMinutes: number;
+  sidebarWidth: number;
+  diagEnabled: boolean;
+  startFullscreen: boolean;
+}
+
+export interface RdpData {
+  machines: Machine[];
+  credentials: RdpCredential[];
+  defaultCredentialId: string | null;
+  bastion: Bastion;
+  settings: RdpSettings;
+  hasMaster: boolean;
+  vaultPath: string;
+  diagEnabled: boolean;
+  ocr: boolean;
+}
+
+export interface RdpStatus {
+  ready: boolean; // vault open
+  locked: boolean;
+  needsPassword: boolean; // vault still closed: master password needed
+  hasMaster: boolean;
+  vaultPath: string;
+  autoLockMinutes: number;
+}
+
+export type RdpWindowMode = 'docked' | 'window' | 'fullscreen';
 
 /** One terminal inside a tab. */
 export interface Pane {
@@ -187,6 +274,8 @@ export interface Pane {
   cols?: number;
   rows?: number;
   unread?: boolean; // output arrived while not looking
+  rdpMode?: RdpWindowMode; // RDP panes: docked in the tab, own window or fullscreen
+  rdpReady?: boolean; // RDP panes: the engine has the session
 }
 
 /** Binary split tree: 'row' = side by side, 'col' = stacked. ratio is the first child's share. */

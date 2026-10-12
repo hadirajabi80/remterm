@@ -26,15 +26,18 @@ type App struct {
 	logs     *logStore
 	tunnels  tunnelManager
 	files    fileManager
+	rdp      *rdpEngine
 }
 
 func NewApp() *App {
-	return &App{
+	a := &App{
 		sessions: make(map[string]*Session),
 		logs:     &logStore{},
 		tunnels:  tunnelManager{running: map[string]*runningTunnel{}, status: map[string]TunnelStatus{}},
 		files:    fileManager{sessions: map[string]*fileSession{}, transfers: map[string]context.CancelFunc{}},
 	}
+	a.rdp = newRdpEngine(a)
+	return a
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -43,7 +46,7 @@ func (a *App) startup(ctx context.Context) {
 	if err != nil {
 		wruntime.LogErrorf(ctx, "open store: %v", err)
 		s = &Store{
-			path: filepath.Join(os.TempDir(), "termora-data.json"),
+			path: filepath.Join(os.TempDir(), "remterm-data.json"),
 			data: storeData{Snippets: defaultSnippets()},
 		}
 	}
@@ -58,6 +61,7 @@ func (a *App) shutdown(context.Context) {
 		a.history.flush()
 	}
 	a.stopAllTunnels()
+	a.rdp.stop()
 	a.mu.Lock()
 	all := make([]*Session, 0, len(a.sessions))
 	for _, s := range a.sessions {

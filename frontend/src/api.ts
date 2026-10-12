@@ -66,6 +66,9 @@ export const api = {
   takeLaunchFolder: () => call<string>('TakeLaunchFolder'),
   explorerMenuEnabled: () => call<boolean>('ExplorerMenuEnabled'),
   setExplorerMenu: (enable: boolean) => call<void>('SetExplorerMenu', enable),
+  classicMenu: () => call<{ supported: boolean; enabled: boolean }>('ClassicMenu'),
+  setClassicMenu: (enable: boolean) => call<void>('SetClassicMenu', enable),
+  restartExplorer: () => call<void>('RestartExplorer'),
   getSettings: () => call<string>('GetSettings'),
   saveSettings: (json: string) => call<void>('SaveSettings', json),
   listCommandHistory: () => call<CmdEntry[] | null>('ListCommandHistory').then((r) => r ?? []),
@@ -188,7 +191,7 @@ export const clipboard = {
 
 export const openURL = (url: string) => window.runtime.BrowserOpenURL(url);
 
-/** Another launch of Termora (e.g. Explorer "Open in Termora") asked to open a folder. */
+/** Another launch of Remterm (e.g. Explorer "Open in Remterm") asked to open a folder. */
 export const onLaunchOpen = (cb: (folder: string) => void) => window.runtime.EventsOn('launch:open', cb);
 
 export function errorMessage(e: unknown): string {

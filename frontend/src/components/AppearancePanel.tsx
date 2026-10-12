@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api';
+import { useCover } from '../rdp';
 import { BACKGROUNDS, SCHEMES, loadImageFile } from '../themes';
 import type { Appearance, LocalShell } from '../types';
 import { Icon } from './Icon';
@@ -18,15 +19,20 @@ export function AppearancePanel(props: {
   typing: TypingPrefs;
   onTyping(t: TypingPrefs): void;
   shells: LocalShell[];
+  onRdpSettings?(): void;
   onClose(): void;
 }) {
+  useCover();
   const a = props.value;
   const set = <K extends keyof Appearance>(k: K, v: Appearance[K]) => props.onChange({ ...a, [k]: v });
   const fileRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [explorerMenu, setExplorerMenu] = useState<boolean | null>(null);
+  const [classic, setClassic] = useState<{ supported: boolean; enabled: boolean } | null>(null);
+  const [classicChanged, setClassicChanged] = useState(false);
   useEffect(() => {
     api.explorerMenuEnabled().then(setExplorerMenu).catch(() => setExplorerMenu(false));
+    api.classicMenu().then(setClassic).catch(() => setClassic(null));
   }, []);
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
@@ -203,14 +209,50 @@ export function AppearancePanel(props: {
               }}
             />
             <span>
-              <b>"Open in Termora" in Explorer</b>
-              <span className="hint">
-                Right-click a folder, a file or empty space in a folder to open a terminal there. On Windows 11 it is under
-                "Show more options".
-              </span>
+              <b>"Open in Remterm" in Explorer</b>
+              <span className="hint">Right-click a folder, a file or empty space in a folder to open a terminal there.</span>
             </span>
           </label>
+          {classic?.supported && (
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={classic.enabled}
+                onChange={async (e) => {
+                  const on = e.target.checked;
+                  try {
+                    await api.setClassicMenu(on);
+                    setClassic({ ...classic, enabled: on });
+                    setClassicChanged(true);
+                  } catch (err) {
+                    setError(errorMessage(err));
+                  }
+                }}
+              />
+              <span>
+                <b>Full right-click menu (Windows 11)</b>
+                <span className="hint">
+                  Windows 11's short menu hides "Open in Remterm" under "Show more options". This brings back the full menu for your account.
+                </span>
+                {classicChanged && (
+                  <button className="btn sm" style={{ marginTop: 6 }} onClick={() => void api.restartExplorer().then(() => setClassicChanged(false)).catch((err) => setError(errorMessage(err)))}>
+                    Restart Explorer to apply
+                  </button>
+                )}
+              </span>
+            </label>
+          )}
         </section>
+
+        {props.onRdpSettings && (
+          <section>
+            <h3>Remote Desktop</h3>
+            <p className="hint">WALLIX bastion, saved logins, auto-fill, display and the master password.</p>
+            <button className="btn sm" onClick={props.onRdpSettings}>
+              <Icon name="monitor" size={13} /> Remote Desktop settings…
+            </button>
+          </section>
+        )}
 
         <section>
           <h3>Session logs</h3>

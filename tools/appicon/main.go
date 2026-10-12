@@ -1,4 +1,4 @@
-// Command appicon draws the Termora icon and writes the Windows resources
+// Command appicon draws the Remterm icon and writes the Windows resources
 // (icon, manifest, version info) as .syso files that `go build` links in.
 //
 //	go run ./tools/appicon [version]
@@ -21,7 +21,7 @@ import (
 	"github.com/tc-hib/winres/version"
 )
 
-var appVersion = "0.1.0" // overridden by the first argument
+var appVersion = "1.0.0" // overridden by the first argument
 
 var sizes = []int{256, 128, 64, 48, 40, 32, 24, 20, 16}
 
@@ -45,8 +45,8 @@ func main() {
 	must(f.Close())
 
 	// The app, and the installer (separate exe with its own description).
-	writeResources(".", icon, "Termora", "Termora SSH workspace")
-	writeResources("installer", icon, "TermoraSetup", "Termora Setup")
+	writeResources(".", icon, "Remterm", "Remterm - SSH, Remote Desktop and terminals")
+	writeResources("installer", icon, "RemtermSetup", "Remterm Setup")
 	fmt.Println("wrote rsrc_windows_*.syso (app + installer), build/windows/icon.ico, build/appicon.png")
 }
 
@@ -70,9 +70,9 @@ func writeResources(dir string, icon *winres.Icon, name, description string) {
 	vi.SetFileVersion(appVersion)
 	vi.SetProductVersion(appVersion)
 	for k, v := range map[string]string{
-		version.ProductName:     "Termora",
+		version.ProductName:     "Remterm",
 		version.FileDescription: description,
-		version.LegalCopyright:  "© Termora",
+		version.LegalCopyright:  "© Remterm",
 	} {
 		must(vi.Set(version.LangDefault, k, v))
 	}
@@ -108,27 +108,34 @@ func mix(a, b fcolor, t float64) fcolor {
 
 type seg struct{ ax, ay, bx, by float64 }
 
-// render draws the icon at size px using supersampling for anti-aliasing.
+// render draws the icon at size px using supersampling for anti-aliasing:
+// a monitor (Remote Desktop) showing a ">_" prompt (terminal).
 func render(size int) image.Image {
 	small := size <= 32
 	margin := 0.055
-	stroke := 0.088
+	stroke, glyphStroke := 0.062, 0.072
 	if small {
-		margin, stroke = 0.02, 0.115
+		margin, stroke, glyphStroke = 0.02, 0.09, 0.1
 	}
 	radius := 0.225
 
-	// ">" chevron and "_" cursor, in unit coordinates.
+	// Screen outline (rounded rectangle) in unit coordinates.
+	scx, scy, shw, shh, sr := 0.5, 0.445, 0.30, 0.215, 0.07
 	glyph := []seg{
-		{0.285, 0.330, 0.465, 0.500},
-		{0.465, 0.500, 0.285, 0.670},
-		{0.535, 0.670, 0.725, 0.670},
+		{0.335, 0.355, 0.445, 0.445}, // ">"
+		{0.445, 0.445, 0.335, 0.535},
+		{0.495, 0.535, 0.635, 0.535}, // "_"
+		{0.5, 0.66, 0.5, 0.75},       // stand
+		{0.375, 0.775, 0.625, 0.775}, // base
 	}
-	if small { // nudge toward the pixel grid and widen for legibility
+	if small { // bigger and on the pixel grid for legibility
+		scx, scy, shw, shh, sr = 0.5, 0.43, 0.34, 0.25, 0.06
 		glyph = []seg{
-			{0.27, 0.31, 0.47, 0.50},
-			{0.47, 0.50, 0.27, 0.69},
-			{0.55, 0.69, 0.75, 0.69},
+			{0.31, 0.33, 0.46, 0.445},
+			{0.46, 0.445, 0.31, 0.56},
+			{0.52, 0.56, 0.69, 0.56},
+			{0.5, 0.68, 0.5, 0.79},
+			{0.33, 0.8, 0.67, 0.8},
 		}
 	}
 
@@ -161,10 +168,14 @@ func render(size int) image.Image {
 					if h := 1 - (y-lo)/(hi-lo)/0.5; h > 0 {
 						col = mix(col, fcolor{1, 1, 1}, edgeLight*h*h)
 					}
-					for _, s := range glyph {
-						if distToSeg(x, y, s) <= stroke/2 {
-							col = glyphCol
-							break
+					if math.Abs(roundRectDist(x, y, scx, scy, shw, shh, sr)) <= stroke/2 {
+						col = glyphCol
+					} else {
+						for _, s := range glyph {
+							if distToSeg(x, y, s) <= glyphStroke/2 {
+								col = glyphCol
+								break
+							}
 						}
 					}
 					ar += col.r
@@ -188,6 +199,14 @@ func render(size int) image.Image {
 	return img
 }
 
+// roundRectDist is the signed distance from (x, y) to a rounded rectangle
+// centred at (cx, cy) with half extents hw, hh and corner radius r.
+func roundRectDist(x, y, cx, cy, hw, hh, r float64) float64 {
+	qx := math.Abs(x-cx) - hw + r
+	qy := math.Abs(y-cy) - hh + r
+	outside := math.Hypot(math.Max(qx, 0), math.Max(qy, 0))
+	return outside + math.Min(math.Max(qx, qy), 0) - r
+}
 func distToSeg(x, y float64, s seg) float64 {
 	vx, vy := s.bx-s.ax, s.by-s.ay
 	wx, wy := x-s.ax, y-s.ay

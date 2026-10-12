@@ -21,8 +21,8 @@ export function TabPanes(props: {
   onActivate(paneKey: string): void;
   onRatio(splitKey: string, ratio: number): void;
   onClosePane(paneKey: string): void;
-  /** Content for non-terminal panes (SFTP, log viewer). */
-  renderPane(pane: Pane, active: boolean): ReactNode;
+  /** Content for non-terminal panes (SFTP, log viewer, Remote Desktop); shown = on screen now. */
+  renderPane(pane: Pane, active: boolean, shown: boolean): ReactNode;
 }) {
   const { tab } = props;
   const ref = useRef<HTMLDivElement>(null);
@@ -64,11 +64,11 @@ export function TabPanes(props: {
           <div
             key={k}
             data-pane-key={k}
-            className={`pane ${multi && !tab.zoomed ? 'multi' : ''} ${multi && isActive && !tab.zoomed ? 'active' : ''} ${r ? '' : 'hidden'} ${tab.broadcast && multi ? 'broadcast' : ''}`}
+            className={`pane pane-${pane.target.kind} ${multi && !tab.zoomed ? 'multi' : ''} ${multi && isActive && !tab.zoomed ? 'active' : ''} ${r ? '' : 'hidden'} ${tab.broadcast && multi ? 'broadcast' : ''}`}
             style={r ? { left: `${r.x}%`, top: `${r.y}%`, width: `${r.w}%`, height: `${r.h}%` } : undefined}
             onMouseDown={() => !isActive && props.onActivate(k)}
           >
-            {terminal ? <TermView session={session!} active={props.visible && isActive} /> : props.renderPane(pane, props.visible && isActive)}
+            {terminal ? <TermView session={session!} active={props.visible && isActive} /> : props.renderPane(pane, props.visible && isActive, props.visible && !!r)}
             {multi && !tab.zoomed && (
               <div className="pane-head">
                 <span className={`sdot ${pane.status}`} />

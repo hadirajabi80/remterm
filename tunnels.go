@@ -14,7 +14,7 @@ import (
 )
 
 // Port forwarding rules, like `ssh -L`, `ssh -R` and `ssh -D`. Each running
-// rule has its own SSH connection; auto-start rules start with Termora and
+// rule has its own SSH connection; auto-start rules start with Remterm and
 // reconnect when the connection drops.
 
 type TunnelStatus struct {

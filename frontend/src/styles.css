@@ -1405,6 +1405,7 @@ select.input {
 }
 .menu-label {
   flex: 1;
+  white-space: nowrap;
 }
 .menu-hint {
   color: var(--muted);
@@ -2403,4 +2404,322 @@ select.input {
   flex: 1;
   min-height: 0;
   padding: 8px 4px 4px 12px;
+}
+
+/* ---------- Remote Desktop ---------- */
+.host-ico.rdp {
+  position: relative;
+  --env: var(--accent);
+}
+.host-ico.rdp.direct {
+  --env: #bb9af7;
+}
+.ico-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg-2);
+  box-sizing: content-box;
+}
+.fav-star {
+  margin-left: 5px;
+  color: var(--warn);
+  font-size: 11px;
+}
+.group-head.fav .group-name {
+  color: var(--warn);
+}
+.badge.rdp {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.rdp-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+.rdp-tools .btn {
+  flex: 1;
+}
+.rdp-tools .count {
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 4px 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: linear-gradient(160deg, rgba(122, 162, 247, 0.09), rgba(187, 154, 247, 0.05));
+}
+.setup-title {
+  margin: 0 0 4px 2px;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.setup-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.setup-step:hover {
+  background: var(--panel-2);
+}
+.setup-step.done {
+  color: var(--muted);
+}
+.setup-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #0a0d12;
+  font-size: 11px;
+  font-weight: 700;
+}
+.setup-step.done .setup-num {
+  background: rgba(158, 206, 106, 0.2);
+  color: var(--ok);
+}
+
+.pane.pane-rdp {
+  padding: 0;
+}
+.pane.pane-rdp.multi {
+  padding-top: 30px;
+}
+.rdp-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--term-bg);
+}
+.rdp-snap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  filter: saturate(0.85) brightness(0.9);
+}
+.rdp-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.rdp-card-title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+.rdp-card-text {
+  max-width: 520px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+.row-btns.center {
+  justify-content: center;
+}
+.rdp-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--border-2);
+  border-top-color: var(--accent);
+  animation: rdp-spin 0.8s linear infinite;
+}
+@keyframes rdp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pw-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pw-row .input {
+  flex: 1;
+}
+.login-example {
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--ok);
+  font-size: 12px;
+  user-select: text;
+  word-break: break-all;
+}
+.ok-box {
+  padding: 8px 11px;
+  border-radius: 7px;
+  border: 1px solid rgba(158, 206, 106, 0.3);
+  background: rgba(158, 206, 106, 0.08);
+  color: var(--ok);
+}
+.logins {
+  display: grid;
+  grid-template-columns: 230px 1fr;
+  gap: 16px;
+  min-height: 270px;
+}
+.logins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.login-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.login-item:hover {
+  background: var(--panel);
+}
+.login-item.on {
+  background: var(--accent-soft);
+}
+.login-item.add {
+  margin-top: 4px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.login-star {
+  color: var(--border-2);
+  font-size: 12px;
+}
+.login-star.on {
+  color: var(--warn);
+}
+.login-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.login-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.login-user {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.logins-form .row-btns {
+  margin-top: 2px;
+}
+.import-text {
+  min-height: 210px;
+  resize: vertical;
+  white-space: pre;
+  font-size: 12px;
+}
+.import-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+.import-status.ok {
+  color: var(--ok);
+}
+.unlock-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  width: 320px;
+  max-width: 100%;
+}
+.unlock-form .error-box {
+  grid-column: span 2;
+}
+.unlock-form.compact {
+  width: 100%;
+  margin-top: 6px;
+}
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 35%, #141b27, var(--bg) 70%);
+  animation: fade 0.15s;
+}
+.lock-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.lock-card h2 {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.lock-card .muted-text {
+  margin-bottom: 12px;
+}
+.lock-ico {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  color: #0a0d12;
+  background: linear-gradient(135deg, #7aa2f7, #bb9af7);
+  box-shadow: 0 10px 30px rgba(122, 162, 247, 0.3);
+}
+/* Remote Desktop windows cover the content area: keep toasts on the status bar then. */
+.toast.low {
+  bottom: 2px;
+  padding: 3px 12px;
+  font-size: 12px;
+  border-radius: 6px;
 }

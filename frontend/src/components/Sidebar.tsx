@@ -5,9 +5,10 @@ import { buildGroupTree, groupBy, hostLabel, matches, timeAgo, type GroupNode } 
 import { Icon } from './Icon';
 import { Menu, type MenuItem } from './Menu';
 import { KeychainPanel, KnownHostsPanel, LogsPanel, TunnelsPanel, WorkspacesPanel } from './panels';
+import { RdpPanel, type RdpCtx } from './RdpPanel';
 import { SnippetInfo } from './SnippetInfo';
 
-export type Panel = 'hosts' | 'snippets' | 'history' | 'keychain' | 'tunnels' | 'workspaces' | 'logs' | 'knownhosts';
+export type Panel = 'hosts' | 'rdp' | 'snippets' | 'history' | 'keychain' | 'tunnels' | 'workspaces' | 'logs' | 'knownhosts';
 
 /** Everything the sidebar sections show and can do. */
 export interface SidebarCtx {
@@ -53,7 +54,8 @@ export interface SidebarCtx {
 }
 
 const NAV: { id: Panel; icon: string; label: string }[] = [
-  { id: 'hosts', icon: 'server', label: 'Hosts' },
+  { id: 'hosts', icon: 'server', label: 'SSH hosts' },
+  { id: 'rdp', icon: 'monitor', label: 'Remote Desktop' },
   { id: 'snippets', icon: 'code', label: 'Snippets' },
   { id: 'history', icon: 'clock', label: 'History' },
   { id: 'keychain', icon: 'key', label: 'Keychain' },
@@ -63,25 +65,28 @@ const NAV: { id: Panel; icon: string; label: string }[] = [
   { id: 'knownhosts', icon: 'shield', label: 'Known hosts' },
 ];
 
-export function Sidebar(props: { ctx: SidebarCtx; panel: Panel; onPanel(p: Panel): void }) {
+export function Sidebar(props: { ctx: SidebarCtx; rdp: RdpCtx; panel: Panel; onPanel(p: Panel): void }) {
   const { ctx, panel } = props;
   const running = Object.values(ctx.tunnelStatus).filter((s) => s.state === 'running').length;
+  const rdpOpen = Object.values(props.rdp.openStatus).filter((s) => s === 'connected').length;
   return (
     <aside className="sidebar">
       <nav className="rail">
-        <div className="brand-logo" title="Termora">
+        <div className="brand-logo" title="Remterm">
           <Icon name="terminal" size={16} />
         </div>
         {NAV.map((n) => (
           <button key={n.id} className={`rail-btn ${panel === n.id ? 'on' : ''}`} title={n.label} onClick={() => props.onPanel(n.id)}>
             <Icon name={n.icon} size={18} />
             {n.id === 'tunnels' && running > 0 && <span className="rail-badge">{running}</span>}
+            {n.id === 'rdp' && rdpOpen > 0 && <span className="rail-badge">{rdpOpen}</span>}
           </button>
         ))}
       </nav>
       <div className="side-panel">
         <div className="side-title">{NAV.find((n) => n.id === panel)?.label}</div>
         {panel === 'hosts' && <HostsPanel ctx={ctx} />}
+        {panel === 'rdp' && <RdpPanel ctx={props.rdp} />}
         {panel === 'snippets' && <SnippetsPanel ctx={ctx} />}
         {panel === 'history' && <HistoryPanel ctx={ctx} />}
         {panel === 'keychain' && <KeychainPanel ctx={ctx} />}

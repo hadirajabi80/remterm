@@ -28,6 +28,10 @@ export function TabBar(props: {
   onSelect(key: string): void;
   onClose(key: string): void;
   onNewSsh(): void;
+  onNewRdp?(): void;
+  /** Tools for the active Remote Desktop pane (null when the active pane is not RDP). */
+  rdp: { connected: boolean; mode: string } | null;
+  onRdp(action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect'): void;
   onNewLocal(shellId: string): void;
   onSplit(dir: 'row' | 'col'): void;
   onToggleZoom(): void;
@@ -45,6 +49,7 @@ export function TabBar(props: {
     })),
     ...(props.shells.length ? (['sep'] as const) : []),
     { label: 'SSH connection…', hint: 'Ctrl+Shift+T', icon: <Icon name="server" size={14} />, onClick: props.onNewSsh },
+    ...(props.onNewRdp ? [{ label: 'Remote Desktop…', hint: 'Ctrl+Alt+P', icon: <Icon name="monitor" size={14} />, onClick: props.onNewRdp }] : []),
   ];
 
   return (
@@ -73,6 +78,7 @@ export function TabBar(props: {
             {t.local && <Icon name="terminal" size={12} />}
             {t.kind === 'sftp' && <Icon name="folder" size={12} />}
             {t.kind === 'log' && <Icon name="file" size={12} />}
+            {t.kind === 'rdp' && <Icon name="monitor" size={12} />}
             <span className="tab-title">{t.title}</span>
             {t.paneCount > 1 && <span className="tab-count" title={`${t.paneCount} panes`}>{t.paneCount}</span>}
             {t.unread && <span className="tab-unread" title="New output" />}
@@ -102,6 +108,28 @@ export function TabBar(props: {
       </div>
 
       <div className="tabbar-spacer" />
+
+      {props.rdp && (
+        <div className="tool-group">
+          <button className="icon-btn" title="Fill a saved login on the current screen (Ctrl+Alt+K)" disabled={!props.rdp.connected} onClick={() => props.onRdp('fill')}>
+            <Icon name="keyboard" />
+          </button>
+          <button className="icon-btn" title="Fullscreen (Ctrl+Alt+Enter)" onClick={() => props.onRdp('fullscreen')}>
+            <Icon name="maximize" />
+          </button>
+          <button className="icon-btn" title="Open in its own window (another monitor)" onClick={() => props.onRdp('popout')}>
+            <Icon name="external" />
+          </button>
+          <button className="icon-btn" title="Reconnect (Ctrl+Alt+R)" onClick={() => props.onRdp('reconnect')}>
+            <Icon name="refresh" />
+          </button>
+          {props.rdp.connected && (
+            <button className="icon-btn" title="Disconnect" onClick={() => props.onRdp('disconnect')}>
+              <Icon name="plug" />
+            </button>
+          )}
+        </div>
+      )}
 
       {props.hasActive && (
         <div className="tool-group">

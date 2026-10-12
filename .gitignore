@@ -1,5 +1,9 @@
 build/bin/
+build/engine/
+build/release/
 frontend/node_modules/
 frontend/dist/
-installer/payload/Termora.exe
+installer/payload/*.gz
+rdp/engine/bin/
+rdp/engine/obj/
 *.exe.tmp

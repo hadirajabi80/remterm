@@ -14,7 +14,7 @@ export interface PanelState {
 }
 
 type SortKey = 'name' | 'size' | 'modified';
-const DRAG_TYPE = 'application/x-termora-files';
+const DRAG_TYPE = 'application/x-remterm-files';
 
 /**
  * One side of the SFTP view: the local disk or a host. Lists a folder,

@@ -28,11 +28,12 @@ export function StatusBar(props: {
     );
   }
   const local = pane.target.kind === 'local';
+  const isRdp = pane.target.kind === 'rdp';
   const lat = pane.latency;
   const latClass = lat === undefined ? '' : lat < 80 ? 'good' : lat < 200 ? 'warn' : 'bad';
   return (
     <footer className="statusbar">
-      {local ? <span className="badge local">LOCAL</span> : pane.env && <span className={`badge ${pane.env}`}>{ENV_SHORT[pane.env] ?? pane.env}</span>}
+      {local ? <span className="badge local">LOCAL</span> : isRdp ? <span className="badge rdp">RDP</span> : pane.env && <span className={`badge ${pane.env}`}>{ENV_SHORT[pane.env] ?? pane.env}</span>}
       {props.broadcast && props.paneCount > 1 && <span className="badge broadcast">BROADCAST · {props.paneCount} panes</span>}
       <span className="st-status">
         <span className={`sdot ${pane.status}`} />
@@ -52,8 +53,14 @@ export function StatusBar(props: {
           {pane.cols}×{pane.rows}
         </span>
       )}
-      <span>UTF-8</span>
-      <span>{props.fontSize}px</span>
+      {isRdp ? (
+        <span>{pane.rdpMode === 'window' ? 'own window' : pane.rdpMode === 'fullscreen' ? 'fullscreen' : 'Ctrl+Alt+K fill login'}</span>
+      ) : (
+        <>
+          <span>UTF-8</span>
+          <span>{props.fontSize}px</span>
+        </>
+      )}
     </footer>
   );
 }

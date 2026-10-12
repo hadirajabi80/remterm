@@ -1,4 +1,4 @@
-module termora
+module remterm
 
 go 1.26.4
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Host, LocalShell } from '../types';
+import { lastUsedMs, machineDetail, RDP_HOST_RE } from '../rdp';
+import type { Host, LocalShell, Machine } from '../types';
 import { byRecent, hostLabel, looksLikeSpec, timeAgo } from '../util';
 import { Icon } from './Icon';
 
@@ -19,38 +20,61 @@ const SHORTCUTS: [string, string][] = [
   ['Toggle sidebar', 'Ctrl+Shift+B'],
 ];
 
+const RDP_SHORTCUTS: [string, string][] = [
+  ['Fill a saved login', 'Ctrl+Alt+K'],
+  ['Fullscreen on / off', 'Ctrl+Alt+Enter'],
+  ['Next / previous tab', 'Ctrl+Alt+PgDn / PgUp'],
+  ['Quick connect', 'Ctrl+Alt+P'],
+  ['Reconnect / close', 'Ctrl+Alt+R / W'],
+  ['Lock', 'Ctrl+Alt+L'],
+];
+
 export function Welcome(props: {
   hosts: Host[];
   shells: LocalShell[];
+  machines: Machine[] | null; // null: Remote Desktop not available / not unlocked
   onLocal(shellId: string): void;
   onConnect(h: Host): void;
   onQuickConnect(spec: string): void;
+  onQuickRdp?(host: string): void;
+  onRdp(m: Machine): void;
   onNewHost(): void;
   onImport(): void;
+  onRdpPanel(): void;
 }) {
   const [spec, setSpec] = useState('');
-  const valid = looksLikeSpec(spec);
+  const q = spec.trim();
+  const sshOk = looksLikeSpec(q);
+  const rdpOk = !!props.onQuickRdp && RDP_HOST_RE.test(q);
   const hosts = byRecent(props.hosts);
   const hasRecent = hosts.some((h) => h.lastUsed > 0);
+  const machines = [...(props.machines ?? [])].sort((a, b) => lastUsedMs(b) - lastUsedMs(a) || Number(b.favorite) - Number(a.favorite));
+
   return (
     <div className="welcome">
       <div className="welcome-inner">
         <div className="hero">
           <h1>Connect to a server</h1>
-          <p>Saved hosts, keys from your agent, and snippets for your stack. Dropped connections reconnect automatically.</p>
+          <p>SSH, Remote Desktop and local terminals in one window. Dropped connections reconnect automatically.</p>
         </div>
 
         <form
           className="quick"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid) props.onQuickConnect(spec.trim().replace(/^ssh\s+/, ''));
+            if (sshOk) props.onQuickConnect(q.replace(/^ssh\s+/, ''));
+            else if (rdpOk) props.onQuickRdp?.(q);
           }}
         >
           <Icon name="terminal" />
-          <input autoFocus placeholder="user@host:port" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
-          <button className="btn primary" type="submit" disabled={!valid}>
-            Connect
+          <input autoFocus placeholder="user@host:port for SSH — or an IP for Remote Desktop" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
+          {props.onQuickRdp && (
+            <button className="btn" type="button" disabled={!rdpOk} onClick={() => props.onQuickRdp?.(q)} title="Direct Remote Desktop (RDP)">
+              <Icon name="monitor" size={14} /> RDP
+            </button>
+          )}
+          <button className="btn primary" type="submit" disabled={!sshOk}>
+            SSH
           </button>
         </form>
 
@@ -70,8 +94,45 @@ export function Welcome(props: {
           </>
         )}
 
+        {props.machines && (
+          <>
+            <div className="section-title">
+              <span>Remote Desktop</span>
+              <span className="section-actions">
+                <button className="link" onClick={props.onRdpPanel}>
+                  All machines →
+                </button>
+              </span>
+            </div>
+            {machines.length === 0 ? (
+              <div className="empty-card">
+                No machines yet. Open <button className="link" onClick={props.onRdpPanel}>Remote Desktop</button> in the sidebar to set up the WALLIX bastion and
+                import your list — or type an IP above.
+              </div>
+            ) : (
+              <div className="cards">
+                {machines.slice(0, 6).map((m) => (
+                  <button key={m.id} className="card" onClick={() => props.onRdp(m)}>
+                    <span className={`host-ico rdp ${m.mode}`}>
+                      <Icon name="monitor" size={15} />
+                    </span>
+                    <span className="card-main">
+                      <span className="card-title">
+                        {m.name}
+                        {m.favorite ? ' ★' : ''}
+                      </span>
+                      <span className="card-sub">{machineDetail(m)}</span>
+                      {m.lastUsed && <span className="card-time">{timeAgo(lastUsedMs(m))}</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
         <div className="section-title">
-          <span>{hasRecent ? 'Recent' : 'Hosts'}</span>
+          <span>{hasRecent ? 'Recent SSH' : 'SSH hosts'}</span>
           <span className="section-actions">
             <button className="link" onClick={props.onImport}>
               Import ~/.ssh/config
@@ -114,6 +175,21 @@ export function Welcome(props: {
             </div>
           ))}
         </div>
+        {props.machines && (
+          <>
+            <div className="section-title">
+              <span>Inside a Remote Desktop session</span>
+            </div>
+            <div className="keys">
+              {RDP_SHORTCUTS.map(([label, keys]) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <kbd>{keys}</kbd>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

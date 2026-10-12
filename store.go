@@ -73,15 +73,54 @@ type Store struct {
 }
 
 func dataDir() (string, error) {
-	if d := os.Getenv("TERMORA_DATA_DIR"); d != "" { // tests
+	if d := os.Getenv("REMTERM_DATA_DIR"); d != "" { // tests
 		return d, os.MkdirAll(d, 0o700)
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "Termora")
+	base := dir
+	dir = filepath.Join(base, "Remterm")
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		// First start after Termora: take over its hosts, keys, snippets, logs and settings.
+		if old := filepath.Join(base, "Termora"); dirExists(old) {
+			if err := copyDir(old, dir); err != nil {
+				_ = os.RemoveAll(dir)
+			}
+		}
+	}
 	return dir, os.MkdirAll(dir, 0o700)
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// copyDir copies a folder tree (files and folders only).
+func copyDir(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o600)
+	})
 }
 
 func OpenStore() (*Store, error) {

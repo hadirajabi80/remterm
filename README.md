@@ -1,60 +1,73 @@
-# Termora
+# Remterm
 
-Desktop SSH workspace — Go ([Wails v2](https://wails.io)) + React + xterm.js. Single ~12 MB exe, uses the system WebView2.
+**SSH, Remote Desktop and local terminals in one window** — for Windows 10/11. Remterm merges
+[Termora](https://github.com/hadirajabi80/termora) (SSH workspace) and [Remora](https://github.com/hadirajabi80/remora)
+(tabbed RDP manager with WALLIX auto-fill): RDP sessions open as tabs next to your SSH and local terminals.
 
-## Build & run
+## Install
 
-```powershell
-.\build.ps1 -Run        # npm install (first time) + frontend build + go build, then launch
-.\build.ps1 -Shortcut   # also create Desktop + Start Menu shortcuts to build\bin\Termora.exe
-.\build.ps1 -Installer  # also build build\bin\TermoraSetup-<version>.exe to give to others
-```
+Run **RemtermSetup-<version>.exe** (no admin rights needed; Windows SmartScreen: *More info → Run anyway*, it is not code-signed yet).
+It installs to `%LOCALAPPDATA%\Programs\Remterm`, adds Start Menu and Desktop shortcuts, Explorer's **Open in Remterm** entry and an
+*Apps & features* entry. Run it again to update. `/S` installs silently (`/S /classic` also switches on the full right-click menu).
 
-Output: `build\bin\Termora.exe`. No Wails CLI needed — the script passes the `desktop,production` build tags itself.
-
-The app icon is drawn in code by `tools/appicon`, which also writes the DPI-aware manifest and version info into `rsrc_windows_*.syso` (linked automatically by `go build`). After changing the icon, regenerate with `go run ./tools/appicon`; `build/appicon.png` and `build/windows/icon.ico` are written for reuse elsewhere.
-
-## Installer
-
-`TermoraSetup-<version>.exe` installs for the current user without admin rights: `%LOCALAPPDATA%\Programs\Termora`, Start Menu + Desktop shortcuts, Explorer's **Open in Termora** entry and an *Apps & features* entry (uninstall removes everything; it asks before deleting saved hosts). Run it again to update. `/S` installs silently. The exe is not code-signed yet, so Windows SmartScreen shows *More info → Run anyway* the first time.
-
-UI-only development in a browser (fake in-memory backend, no SSH):
-
-```powershell
-npm --prefix frontend run dev
-```
+- **Your data comes along.** SSH hosts, keys, snippets and settings from Termora are copied on first start; RDP machines and logins are
+  read from Remora's encrypted vault (`%APPDATA%\RemoteHub\vault.dat`). Setup offers to remove the old Termora / Remora.
+- **Right-click → Open in Remterm** opens a local terminal in that folder (in the running window, as a new tab). Windows 11 shows such
+  entries under *Show more options*; setup (or Settings → Explorer integration) can switch on the full right-click menu so it shows
+  directly.
 
 ## Features
 
-**Hosts & connections**
-- Hosts in **nested groups** (`Clients/Acme/Prod`) with **group settings** inherited by every host below (identity, jump host, proxy, agent forwarding, environment variables, startup command, color scheme); **tags** with tag filters; environment badges (prod gets a red frame)
-- Protocols: **SSH**, **Telnet** (window size, terminal type, auto-login), **Serial** (port, baud, data/stop bits, parity), plus local shells
-- **Host chaining**: jump hosts may have their own jump hosts (loops detected); **SOCKS5 / HTTP proxy** for the first hop; **agent forwarding** (Windows OpenSSH agent or Termora's keys); **environment variables** (SendEnv/AcceptEnv)
-- Import from `~/.ssh/config` (incl. `ProxyJump`) and **PuTTY** sessions; quick connect remembers servers; "connect to all hosts" of a group in one tab
-- Host key verification against `~/.ssh/known_hosts` with a **Known hosts** manager
+**Remote Desktop** (sidebar → monitor icon)
+- RDP sessions in tabs and split panes, next to SSH and terminals; **pop out** a session into its own window (another monitor) or go
+  **fullscreen** with an mstsc-style bar — the session stays connected
+- **WALLIX Bastion** aware: selector-bypass login (`{target}:{auth}:{user}`), and screen detection (Windows OCR) that fills the bastion
+  login and the *Target Information Required* screen
+- **Saved logins**: `Ctrl+Alt+K` in a session → pick a login → typed on the current screen; assign a login to a machine to auto-fill
+- **Import** a pasted WALLIX target list (auto-grouped), favorites, recent, groups, quick connect to any IP (`Ctrl+Alt+P` or the palette)
+- **Security**: AES-256-GCM vault, key protected by Windows DPAPI; optional master password (PBKDF2-SHA256), auto-lock and lock screen
+  (`Ctrl+Alt+L`); the server key is pinned on first connect
 
-**Keychain**
-- **Generate** Ed25519 / ECDSA / RSA keys, **import** keys (file or paste, passphrase-protected), **OpenSSH certificates**, copy public key
-- **Install a key on a server** (appends to `authorized_keys` once and links it to the host)
-- **Identities**: username + password/key reused by many hosts or whole groups; secrets in Windows Credential Manager
+**SSH & terminals** — everything Termora had: hosts in nested groups with inherited settings, SSH/Telnet/Serial, jump-host chains,
+proxies, agent forwarding, keychain (generate/import keys, certificates, install key on server), identities, SFTP with two panes and
+drag & drop, port forwarding (local/remote/SOCKS), split panes, broadcast input, workspaces, snippets, command history, session logs,
+local shells via ConPTY (PowerShell, cmd, WSL, Git Bash), themes and backgrounds.
 
-**Files & tunnels**
-- **SFTP**: two panes (this PC or any host on either side), drag & drop between panes and **from Explorer**, multi-select, rename, delete, new folder, **permissions**, hidden files, sortable columns, server-to-server copy, **transfers** with progress/cancel, **edit remote files** in your editor (every save uploads back)
-- **Port forwarding**: Local, Remote and Dynamic (SOCKS5) rules, start/stop, live status, **auto-start** with reconnect
+### Shortcuts
 
-**Terminal**
-- Tabs and **split panes** (`Alt+Shift+=`/`-`/`D`, drag dividers, `Alt+Arrows`, zoom `Ctrl+Shift+Z`), **broadcast input** (`Ctrl+Shift+A`), unread-output dots
-- **Workspaces**: save a tab's layout and connections (`Ctrl+S`) and reopen it in one click
-- **Snippets** (~75 built in, `{{placeholders}}`), **run a snippet on several hosts** at once
-- **Command history** autocomplete (gray suggestion, `↑` list) — passwords at hidden prompts are never stored
-- **Session logs**: recorded per session (last 5 per server), bookmarks with notes, replay with colors, search, export to .txt
-- Local terminals via ConPTY (PowerShell, cmd, WSL, Git Bash), Explorer **Open in Termora**
-- Appearance: backgrounds, 9 color schemes (per host or group too), font size; find in scrollback, clickable links, Windows-style copy/paste
+| Keys | Action |
+|---|---|
+| `Ctrl+Shift+P` | Command palette (hosts, machines, actions; type `user@host` or an IP to connect) |
+| `Ctrl+Shift+T` / `Ctrl+Shift+`` ` | New connection / local terminal |
+| `Ctrl+Tab`, `Ctrl+1…9` | Switch tabs (inside an RDP session: `Ctrl+Alt+PgDn/PgUp`, `Ctrl+Alt+1…9`) |
+| `Ctrl+Alt+K` | Fill a saved login in the RDP session |
+| `Ctrl+Alt+Enter` | RDP fullscreen on / off |
+| `Ctrl+Alt+R` / `Ctrl+Alt+W` | Reconnect / close the RDP session |
+| `Ctrl+Alt+L` | Lock (needs a master password) |
 
-## Tests
+## How it is built
 
-`go test -tags desktop,production ./...` runs unit tests plus integration tests against an in-process SSH server (password/key auth, identities, 3-hop jump chain, group inheritance, SFTP transfers, local + SOCKS forwarding, SOCKS proxy, Telnet negotiation, session-log retention) and ConPTY round-trips with the installed shells.
+```
+Remterm.exe      Go (Wails v2) + React/xterm.js UI — SSH, SFTP, tunnels, local terminals, Explorer integration
+RemtermRdp.exe   C# / WinForms engine — Windows RDP ActiveX (mstscax), encrypted RDP vault, WALLIX auto-fill, OCR
+```
 
-## Not (yet) like Termius
+Remterm starts the engine on demand and talks to it over a named pipe limited to your Windows account (JSON lines, one-time token).
+Each RDP session is a native child window of Remterm's main window; the UI reports where the tab's content area is and the engine keeps
+the session exactly there (hidden while a dialog or menu covers it — a still picture is shown instead).
 
-Cloud sync and team vaults (need a server), AWS/DigitalOcean/Azure import, FIDO2/biometric keys, Mosh, AI command generation.
+## Build
+
+Needs Go 1.26, Node 20+, .NET 10 SDK.
+
+```powershell
+.\build.ps1 -Run         # frontend + RDP engine + Remterm.exe into build\bin, then launch
+.\build.ps1 -Installer   # also build\bin\RemtermSetup-<version>.exe (both exes, gzipped inside)
+.\build.ps1 -SkipEngine  # reuse the built engine (faster UI/Go iterations)
+```
+
+UI-only development in a browser with a fake backend (no SSH/RDP): `npm --prefix frontend run dev`.
+
+Tests: `go test -tags desktop,production ./...` (SSH integration tests against an in-process server, ConPTY round-trips).
+
+Engine maintenance (no window): `RemtermRdp.exe --import <file>` · `--set-host <ip>` · `--dump`.

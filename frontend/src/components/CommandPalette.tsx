@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { RDP_HOST_RE, useCover } from '../rdp';
 import { looksLikeSpec, matches } from '../util';
 import { Icon } from './Icon';
 
 export interface PaletteItem {
   id: string;
-  kind: 'Connect' | 'Local' | 'Run' | 'Action';
+  kind: 'Connect' | 'Remote' | 'Local' | 'Run' | 'Action';
   label: string;
   detail?: string;
   env?: string;
@@ -13,19 +14,26 @@ export interface PaletteItem {
   run(opts?: { split?: boolean }): void;
 }
 
-const KIND_ICON: Record<PaletteItem['kind'], string> = { Connect: 'server', Local: 'terminal', Run: 'code', Action: 'bolt' };
+const KIND_ICON: Record<PaletteItem['kind'], string> = { Connect: 'server', Remote: 'monitor', Local: 'terminal', Run: 'code', Action: 'bolt' };
 
 export function CommandPalette(props: {
   items: PaletteItem[];
   onQuickConnect(spec: string, split: boolean): void;
+  /** Direct Remote Desktop to a typed IP/host (when RDP is available). */
+  onQuickRdp?(host: string, split: boolean): void;
   onClose(): void;
 }) {
+  useCover();
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   const results = useMemo(() => {
     const list = props.items.filter((it) => matches(query, it.kind, it.label, it.detail, it.keywords));
+    const q = query.trim();
+    if (props.onQuickRdp && RDP_HOST_RE.test(q) && !list.some((it) => it.kind === 'Remote' && it.detail?.includes(q))) {
+      list.push({ id: 'quick-rdp', kind: 'Remote', label: `Remote Desktop to ${q}`, detail: 'direct RDP', run: (o) => props.onQuickRdp!(q, !!o?.split) });
+    }
     if (looksLikeSpec(query)) {
       const spec = query.trim().replace(/^ssh\s+/, '');
       const quick: PaletteItem = {
@@ -58,7 +66,7 @@ export function CommandPalette(props: {
           <Icon name="search" />
           <input
             autoFocus
-            placeholder="Search hosts, snippets, actions — or type user@host to quick connect"
+            placeholder="Search hosts, machines, snippets, actions — or type user@host / an IP to connect"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {

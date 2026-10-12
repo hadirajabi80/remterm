@@ -20,7 +20,7 @@ import (
 var knownHostsMu sync.Mutex
 
 func knownHostsPath() (string, error) {
-	if p := os.Getenv("TERMORA_KNOWN_HOSTS"); p != "" { // tests
+	if p := os.Getenv("REMTERM_KNOWN_HOSTS"); p != "" { // tests
 		return p, nil
 	}
 	home, err := os.UserHomeDir()

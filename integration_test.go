@@ -148,7 +148,7 @@ func echoServer(t *testing.T) string {
 	return ln.Addr().String()
 }
 
-// newTestApp isolates Termora's data folder and known_hosts in temp dirs.
+// newTestApp isolates Remterm's data folder and known_hosts in temp dirs.
 func newTestApp(t *testing.T, srv *testServer) *App {
 	t.Helper()
 	dir := t.TempDir()
@@ -157,8 +157,8 @@ func newTestApp(t *testing.T, srv *testServer) *App {
 	if err := os.WriteFile(kh, []byte(line+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TERMORA_DATA_DIR", filepath.Join(dir, "data"))
-	t.Setenv("TERMORA_KNOWN_HOSTS", kh)
+	t.Setenv("REMTERM_DATA_DIR", filepath.Join(dir, "data"))
+	t.Setenv("REMTERM_KNOWN_HOSTS", kh)
 	a := NewApp()
 	st, err := OpenStore()
 	if err != nil {
@@ -387,7 +387,7 @@ func TestConnectThroughSocksProxy(t *testing.T) {
 	a := newTestApp(t, srv)
 	host, port := splitAddr(t, srv.addr)
 
-	// A SOCKS5 proxy (reusing Termora's own handler with direct dialing).
+	// A SOCKS5 proxy (reusing Remterm's own handler with direct dialing).
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer ln.Close()
 	var used sync.WaitGroup

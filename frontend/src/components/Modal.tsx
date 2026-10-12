@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCover } from '../rdp';
 import { Icon } from './Icon';
 
 export function Modal(props: {
@@ -8,6 +9,7 @@ export function Modal(props: {
   footer?: ReactNode;
   width?: number;
 }) {
+  useCover();
   const close = useRef(props.onClose);
   close.current = props.onClose;
   useEffect(() => {

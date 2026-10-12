@@ -57,7 +57,7 @@ type Identity struct {
 	HasPassword bool   `json:"hasPassword"`
 }
 
-// KeyItem is a private key kept by Termora (file under <data>/keys/<id>).
+// KeyItem is a private key kept by Remterm (file under <data>/keys/<id>).
 type KeyItem struct {
 	ID            string `json:"id"`
 	Label         string `json:"label"`

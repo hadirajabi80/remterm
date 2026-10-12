@@ -12,11 +12,11 @@ import (
 
 // Command line:
 //
-//	Termora.exe [--cwd <folder or file>]   open a local terminal there
-//	Termora.exe <folder>                   same (what Explorer drag-onto-exe passes)
-//	Termora.exe --install-context-menu     add "Open in Termora" to Explorer, then exit
-//	Termora.exe --uninstall-context-menu   remove it, then exit
-//	Termora.exe --uninstall                uninstall a per-user installation, then exit
+//	Remterm.exe [--cwd <folder or file>]   open a local terminal there
+//	Remterm.exe <folder>                   same (what Explorer drag-onto-exe passes)
+//	Remterm.exe --install-context-menu     add "Open in Remterm" to Explorer, then exit
+//	Remterm.exe --uninstall-context-menu   remove it, then exit
+//	Remterm.exe --uninstall                uninstall a per-user installation, then exit
 
 // cwdFromArgs returns the folder to open, or "" when none was given. A file
 // path opens its containing folder.
@@ -66,13 +66,13 @@ func (l *launchState) take() string {
 	return c
 }
 
-// TakeLaunchFolder returns the folder Termora was started for ("" if none).
+// TakeLaunchFolder returns the folder Remterm was started for ("" if none).
 func (a *App) TakeLaunchFolder() string {
 	return a.launch.take()
 }
 
-// onSecondInstance runs in the first instance when Termora is started again
-// (e.g. "Open in Termora" while it is already open): open a tab there and
+// onSecondInstance runs in the first instance when Remterm is started again
+// (e.g. "Open in Remterm" while it is already open): open a tab there and
 // bring the window forward instead of starting a second window.
 func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	if a.ctx == nil {
