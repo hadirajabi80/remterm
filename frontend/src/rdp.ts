@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import type { Bastion, Machine, RdpCredential, RdpData, RdpSettings, RdpStatus } from './types';
 
 // Remote Desktop lives in the RemtermRdp engine; Go relays JSON calls to it
@@ -43,7 +43,8 @@ export const rdp = {
   focus: (id: string) => call<void>('focus', { id }),
   fill: (id: string) => call<void>('fill', { id }),
   fullscreen: (id: string) => call<void>('fullscreen', { id }),
-  popout: (id: string) => call<void>('popout', { id }),
+  popout: (id: string, screen?: { x: number; y: number; follow?: boolean }) => call<void>('popout', { id, ...screen }),
+  clip: (id: string, rects: { x: number; y: number; w: number; h: number }[]) => call<void>('clip', { id, rects }),
   dock: (id: string) => call<void>('dock', { id }),
   snapshot: (id: string) => call<string>('snapshot', { id }),
 };
@@ -72,27 +73,52 @@ export const RDP_HOST_RE = /^(\d{1,3}(\.\d{1,3}){3}|[a-z0-9][\w-]*(\.[\w-]+)+)(:
 
 // ---------------------------------------------------------------------------
 // Covering native windows. An RDP session is a real window above the web
-// page, so anything drawn over it (dialogs, menus, drawers) would be hidden
-// behind it. Every overlay registers here while open; RDP views then show a
-// still picture of the session in its place.
+// page, so anything drawn over it would be hidden behind it. Every overlay
+// registers here while open:
+//  - small ones (menus, popups, the settings drawer) with their rectangle:
+//    the session stays live and a hole of that shape is cut out of it;
+//  - full ones (dialogs with a backdrop, the lock screen) without one: the
+//    session is replaced by a still picture until they close.
 
-let covers = 0;
+/** Viewport rectangle in CSS pixels. */
+export interface CoverRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+let nextCover = 1;
+const covers = new Map<number, CoverRect | null>();
+let coverVersion = 0;
 const coverSubs = new Set<() => void>();
-const notifyCovers = () => coverSubs.forEach((f) => f());
+const notifyCovers = () => {
+  coverVersion++;
+  coverSubs.forEach((f) => f());
+};
+const sameRect = (a: CoverRect | null | undefined, b: CoverRect | null) =>
+  a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
 
 export const cover = {
-  push(): () => void {
-    covers++;
+  /** rect null = covers the whole window. */
+  push(rect: CoverRect | null = null) {
+    const id = nextCover++;
+    covers.set(id, rect);
     notifyCovers();
-    let done = false;
-    return () => {
-      if (done) return;
-      done = true;
-      covers--;
-      notifyCovers();
+    return {
+      update(r: CoverRect | null) {
+        if (!covers.has(id) || sameRect(covers.get(id), r)) return;
+        covers.set(id, r);
+        notifyCovers();
+      },
+      done() {
+        if (covers.delete(id)) notifyCovers();
+      },
     };
   },
-  get: () => covers > 0,
+  version: () => coverVersion,
+  full: () => [...covers.values()].some((r) => r === null),
+  rects: () => [...covers.values()].filter((r): r is CoverRect => r !== null),
   subscribe(f: () => void) {
     coverSubs.add(f);
     return () => {
@@ -101,7 +127,43 @@ export const cover = {
   },
 };
 
-/** Marks the calling overlay as covering native RDP windows while mounted (and `active`). */
+/** Marks the calling overlay as covering the whole window while mounted (and `active`). */
 export function useCover(active = true) {
-  useEffect(() => (active ? cover.push() : undefined), [active]);
+  useEffect(() => {
+    if (!active) return;
+    return cover.push(null).done;
+  }, [active]);
+}
+
+/** Marks an element (menu, popup, drawer) as covering its own rectangle, plus its shadow. */
+export function useCoverRect(ref: RefObject<HTMLElement>, active = true, margin = 10) {
+  const handle = useRef<ReturnType<typeof cover.push> | null>(null);
+  const measure = (): CoverRect | null => {
+    const el = ref.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.floor(r.left - margin), y: Math.floor(r.top - margin), w: Math.ceil(r.width + 2 * margin), h: Math.ceil(r.height + 2 * margin) };
+  };
+  useLayoutEffect(() => {
+    if (!active || !ref.current) return;
+    const h = cover.push(measure());
+    handle.current = h;
+    const update = () => h.update(measure());
+    const ro = new ResizeObserver(update);
+    ro.observe(ref.current);
+    window.addEventListener('resize', update);
+    // Opening animations scale the element for a moment; measure again after them.
+    const t = window.setTimeout(update, 180);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+      window.clearTimeout(t);
+      handle.current = null;
+      h.done();
+    };
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Position can change on any render (menus place themselves after mounting).
+  useLayoutEffect(() => {
+    handle.current?.update(measure());
+  });
 }

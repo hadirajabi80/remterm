@@ -20,14 +20,17 @@ export function RdpView(props: {
 }) {
   const { id, pane } = props;
   const ref = useRef<HTMLDivElement>(null);
-  const covered = useSyncExternalStore(cover.subscribe, cover.get);
+  useSyncExternalStore(cover.subscribe, cover.version);
+  const covered = cover.full();
+  const holes = cover.rects();
   const [frozen, setFrozen] = useState(false);
   const [snap, setSnap] = useState('');
   const mode = pane.rdpMode ?? 'docked';
   const ready = !!pane.rdpReady;
   const docked = mode === 'docked';
 
-  // Covered: grab a still of the live session first, then hide the native window.
+  // A dialog covers the window: show a still of the live session first (decoded,
+  // so nothing flashes), then hide the native window.
   useEffect(() => {
     if (!covered) {
       setFrozen(false);
@@ -39,16 +42,24 @@ export function RdpView(props: {
       return;
     }
     let cancelled = false;
-    rdp
-      .snapshot(id)
-      .then((img) => !cancelled && setSnap(img))
-      .catch(() => {})
-      .finally(() => !cancelled && setFrozen(true));
+    (async () => {
+      try {
+        const data = await rdp.snapshot(id);
+        if (data) {
+          const img = new Image();
+          img.src = data;
+          await img.decode();
+          if (!cancelled) setSnap(data);
+        }
+      } catch {
+        /* no picture: just hide */
+      }
+      if (!cancelled) setFrozen(true);
+    })();
     return () => {
       cancelled = true;
     };
   }, [covered]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const visible = props.shown && docked && ready && !frozen && !props.locked;
 
   // Keep the native window on top of this element: size, position, visibility.
@@ -82,6 +93,28 @@ export function RdpView(props: {
       window.clearInterval(iv);
     };
   }, [id, visible, ready]);
+
+  // Menus and popups over the live session: cut their shapes out of the native window.
+  const holeKey = useRef('');
+  useEffect(() => {
+    if (!visible || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const s = window.devicePixelRatio || 1;
+    const list = holes
+      .map((h) => {
+        const x1 = Math.max(h.x, r.left), y1 = Math.max(h.y, r.top);
+        const x2 = Math.min(h.x + h.w, r.right), y2 = Math.min(h.y + h.h, r.bottom);
+        return x2 > x1 && y2 > y1 ? { x: Math.floor((x1 - r.left) * s), y: Math.floor((y1 - r.top) * s), w: Math.ceil((x2 - x1) * s), h: Math.ceil((y2 - y1) * s) } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+    const key = JSON.stringify(list);
+    if (key === holeKey.current) return;
+    holeKey.current = key;
+    void rdp.clip(id, list).catch(() => {});
+  });
+  useEffect(() => {
+    if (!visible) holeKey.current = ''; // the engine drops the cut-outs when hidden
+  }, [visible]);
 
   // Give the session the keyboard when its tab comes forward.
   useEffect(() => {

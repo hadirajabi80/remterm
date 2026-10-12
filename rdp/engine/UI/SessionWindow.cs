@@ -20,6 +20,8 @@ internal sealed class SessionWindow : Form
     private MiniFsBar? _mini;
 
     public SessionView View => _view;
+    public bool ShowInactive { get; set; }
+    protected override bool ShowWithoutActivation => ShowInactive;
     public bool IsFullscreen => _fullscreen;
 
     /// <summary>Raised when the user asks to put this session back into its Remterm tab.</summary>
@@ -71,8 +73,11 @@ internal sealed class SessionWindow : Form
         Controls.Add(view);
         Controls.Add(_bar);
         Controls.Add(_toast);
+        // Docking runs from the back of the z-order to the front: the bar (back) takes its strip at
+        // the top first, then the session (in front of it) fills the rest — so nothing is hidden under the bar.
+        _bar.SendToBack();
         view.BringToFront();
-        _bar.BringToFront();
+        _toast.BringToFront();
 
         view.Notify += OnNotify;
         view.StatusChanged += OnStatus;
@@ -91,7 +96,7 @@ internal sealed class SessionWindow : Form
         base.OnShown(e);
         Theme.UseDarkTitleBar(this);
         if (_startFullscreen) ToggleFullscreen();
-        _view.FocusRemote();
+        if (!ShowInactive) _view.FocusRemote();
     }
 
     /// <summary>Removes the view so the window can close without disposing the (re-docked) session.</summary>

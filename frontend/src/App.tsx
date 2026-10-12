@@ -55,6 +55,7 @@ import { Welcome } from './components/Welcome';
 import { RdpView } from './components/RdpView';
 import type { RdpCtx } from './components/RdpPanel';
 import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
+import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
 
 type RdpTarget = Extract<PaneTarget, { kind: 'rdp' }>;
 
@@ -965,6 +966,187 @@ export default function App() {
   };
   const activeRdp = activePane?.target.kind === 'rdp' ? activePane : undefined;
 
+  // ---- dragging tabs: onto a side of another tab (split), the tab bar (reorder), outside (own window) ----
+
+  const [tabDrag, setTabDrag] = useState<TabDrag | null>(null);
+  const termAreaRef = useRef<HTMLDivElement>(null);
+  const suppressTabClick = useRef(false);
+
+  const rdpPanesOf = (tabKey: string) => {
+    const t = tabsRef.current.find((x) => x.key === tabKey);
+    return t ? leaves(t.layout).filter((k) => panesRef.current[k]?.target.kind === 'rdp' && panesRef.current[k]?.rdpReady) : [];
+  };
+
+  const hitTest = (x: number, y: number, d: TabDrag): Pick<TabDrag, 'outside' | 'side' | 'strip'> => {
+    if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return { outside: true, side: null, strip: null };
+    const bar = document.querySelector('.tabbar .tabs')?.getBoundingClientRect();
+    if (bar && y >= bar.top - 6 && y <= bar.bottom + 6 && x >= bar.left - 20) {
+      const els = [...document.querySelectorAll<HTMLElement>('.tabbar [data-tab-key]')];
+      let strip = els.length;
+      for (let i = 0; i < els.length; i++) {
+        const r = els[i].getBoundingClientRect();
+        if (x < r.left + r.width / 2) {
+          strip = i;
+          break;
+        }
+      }
+      return { outside: false, side: null, strip };
+    }
+    const a = termAreaRef.current?.getBoundingClientRect();
+    if (!a || !d.target || d.target === d.key || x < a.left || x > a.right || y < a.top || y > a.bottom) return { outside: false, side: null, strip: null };
+    const fx = (x - a.left) / a.width;
+    const fy = (y - a.top) / a.height;
+    const dist: [DropSide, number][] = [
+      ['left', fx],
+      ['right', 1 - fx],
+      ['top', fy],
+      ['bottom', 1 - fy],
+    ];
+    const [side, near] = dist.reduce((m, c) => (c[1] < m[1] ? c : m));
+    return { outside: false, side: near < 0.34 ? side : null, strip: null };
+  };
+
+  /** Puts tab `srcKey` next to tab `dstKey` (one tab, split) on the given side. */
+  const mergeTab = (srcKey: string, dstKey: string, side: DropSide) => {
+    const src = tabsRef.current.find((t) => t.key === srcKey);
+    const dst = tabsRef.current.find((t) => t.key === dstKey);
+    if (!src || !dst || src === dst) return;
+    if (leaves(src.layout).length + leaves(dst.layout).length > MAX_PANES) {
+      notify(`A tab holds up to ${MAX_PANES} panes`, 'error');
+      return;
+    }
+    const first = side === 'left' || side === 'top';
+    const layout: Tab['layout'] = {
+      type: 'split',
+      key: newKey(),
+      dir: side === 'left' || side === 'right' ? 'row' : 'col',
+      ratio: 0.5,
+      a: first ? src.layout : dst.layout,
+      b: first ? dst.layout : src.layout,
+    };
+    setTabs((prev) => prev.filter((t) => t.key !== srcKey).map((t) => (t.key === dstKey ? { ...t, layout, activePane: src.activePane, zoomed: false } : t)));
+    setActiveKey(dstKey);
+  };
+
+  const moveTab = (key: string, index: number) =>
+    setTabs((prev) => {
+      const from = prev.findIndex((t) => t.key === key);
+      if (from < 0) return prev;
+      const next = prev.filter((t) => t.key !== key);
+      next.splice(index > from ? index - 1 : index, 0, prev[from]);
+      return next;
+    });
+
+  const onTabPointerDown = (key: string, e: React.PointerEvent) => {
+    const el = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    const start = { x: e.clientX, y: e.clientY };
+    let drag: TabDrag | null = null;
+    let torn = ''; // RDP pane whose window currently follows the mouse
+    try {
+      el.setPointerCapture(pointerId); // keeps the events coming when the pointer leaves the window
+    } catch {
+      /* ignore */
+    }
+    const physical = (ev: PointerEvent) => {
+      const s = window.devicePixelRatio || 1;
+      return { x: Math.round(ev.screenX * s), y: Math.round(ev.screenY * s) };
+    };
+    const move = (ev: PointerEvent) => {
+      if (!drag) {
+        if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 7) return;
+        const list = tabsRef.current;
+        const t = list.find((x) => x.key === key);
+        const p = panesRef.current[t?.activePane ?? ''];
+        drag = {
+          key,
+          title: p?.title ?? 'Tab',
+          kind: p?.target.kind ?? 'ssh',
+          status: p?.status ?? 'connected',
+          x: ev.clientX,
+          y: ev.clientY,
+          outside: false,
+          side: null,
+          strip: null,
+          target: activeKeyRef.current !== key ? activeKeyRef.current : null,
+          restore: null,
+          canPopOut: rdpPanesOf(key).length > 0,
+          torn: false,
+        };
+        document.body.classList.add('tab-dragging');
+      }
+      // Dragging the tab you are looking at: once the pointer is over the content area,
+      // show a neighbour there to drop onto (not earlier, so reordering doesn't flicker).
+      const area = termAreaRef.current?.getBoundingClientRect();
+      if (!drag.target && area && ev.clientY > area.top + 8 && ev.clientX >= area.left && ev.clientX <= area.right) {
+        const list = tabsRef.current;
+        const i = list.findIndex((x) => x.key === key);
+        const other = list[i - 1] ?? list[i + 1];
+        if (other) {
+          drag = { ...drag, target: other.key, restore: key };
+          setActiveKey(other.key);
+        }
+      }
+      const hit = hitTest(ev.clientX, ev.clientY, drag);
+      // Out of the window with a single Remote Desktop session: tear it off — its own window
+      // follows the mouse; coming back over Remterm puts it back in the tab.
+      const rdpKeys = drag.canPopOut ? rdpPanesOf(key) : [];
+      if (hit.outside && !torn && rdpKeys.length === 1) {
+        torn = rdpKeys[0];
+        void rdp.popout(torn, { ...physical(ev), follow: true }).catch((err) => notify(errorMessage(err), 'error'));
+      } else if (!hit.outside && torn) {
+        void rdp.dock(torn).catch(() => {});
+        torn = '';
+      }
+      drag = { ...drag, x: ev.clientX, y: ev.clientY, ...hit, torn: !!torn };
+      setTabDrag(drag);
+    };
+    const end = (ev: PointerEvent, cancelled: boolean) => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', cancel);
+      try {
+        el.releasePointerCapture(pointerId);
+      } catch {
+        /* ignore */
+      }
+      document.body.classList.remove('tab-dragging');
+      const d = drag;
+      if (!d) return;
+      suppressTabClick.current = true;
+      window.setTimeout(() => (suppressTabClick.current = false), 0);
+      setTabDrag(null);
+      if (torn) {
+        // The torn-off window stays where it was dropped (the engine follows the real button).
+        setActiveKey(d.key);
+        return;
+      }
+      if (cancelled) {
+        if (d.restore) setActiveKey(d.restore);
+        return;
+      }
+      if (d.outside) {
+        setActiveKey(d.key);
+        const keys = rdpPanesOf(d.key);
+        if (!keys.length) {
+          notify('Only Remote Desktop tabs can open in their own window — drop a tab on a side of another tab to see both together');
+          return;
+        }
+        const at = physical(ev);
+        keys.forEach((k, i) => void rdp.popout(k, { x: at.x + i * 30, y: at.y + i * 30 }).catch((err) => notify(errorMessage(err), 'error')));
+      } else if (d.side && d.target) mergeTab(d.key, d.target, d.side);
+      else if (d.strip !== null) {
+        moveTab(d.key, d.strip);
+        if (d.restore) setActiveKey(d.key);
+      } else if (d.restore) setActiveKey(d.restore);
+    };
+    const up = (ev: PointerEvent) => end(ev, false);
+    const cancel = (ev: PointerEvent) => end(ev, true);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', cancel);
+  };
+
   // ---- global shortcuts (capture phase, so they win over the terminal) ----
 
   useEffect(() => {
@@ -1253,7 +1435,10 @@ export default function App() {
           activePaneCount={activePaneCount}
           zoomed={!!activeTab?.zoomed}
           broadcast={!!activeTab?.broadcast}
-          onSelect={setActiveKey}
+          onSelect={(k) => !suppressTabClick.current && setActiveKey(k)}
+          onTabPointerDown={onTabPointerDown}
+          draggingKey={tabDrag?.key ?? null}
+          dropIndex={tabDrag?.strip ?? null}
           onClose={requestCloseTab}
           onNewSsh={() => setPaletteOpen(true)}
           onNewRdp={rdpAvailable ? () => (rdpData ? setPaletteOpen(true) : showRdpPanel()) : undefined}
@@ -1266,7 +1451,7 @@ export default function App() {
           onAppearance={() => setAppearanceOpen((v) => !v)}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
         />
-        <div className={`term-area ${prodVisible ? 'prod' : ''} ${bgCss ? 'has-bg' : ''}`}>
+        <div ref={termAreaRef} className={`term-area ${prodVisible ? 'prod' : ''} ${bgCss ? 'has-bg' : ''}`}>
           {bgCss && tabs.length > 0 && (
             <>
               <div className="term-bg" style={{ background: bgCss, filter: appearance.blur ? `blur(${appearance.blur}px)` : undefined }} />
@@ -1301,6 +1486,7 @@ export default function App() {
               onRdpPanel={showRdpPanel}
             />
           )}
+          {tabDrag && <TabDropOverlay drag={tabDrag} targetTitle={tabDrag.target ? tabViews.find((v) => v.key === tabDrag.target)?.title : undefined} />}
           {findOpen && activeSession && <FindBar key={activePane?.key} session={activeSession} onClose={() => setFindOpen(false)} />}
         </div>
         <StatusBar

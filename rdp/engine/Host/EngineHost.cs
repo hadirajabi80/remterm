@@ -155,7 +155,10 @@ internal sealed class EngineHost : ApplicationContext
             case "focus": Session(p).Focus(); return null;
             case "fill": ShowFillPicker(Session(p)); return null;
             case "fullscreen": Session(p).ToggleFullscreen(); return null;
-            case "popout": Session(p).PopOut(); return null;
+            case "popout":
+                Session(p).PopOut(p.TryGetProperty("x", out _) ? new Point(Int(p, "x"), Int(p, "y")) : null, Bool(p, "follow"));
+                return null;
+            case "clip": Session(p).SetClip(Get<ClipRect[]>(p, "rects").Select(r => new Rectangle(r.X, r.Y, r.W, r.H)).ToArray()); return null;
             case "dock": Session(p).Dock(); return null;
             case "snapshot": return Session(p).Snapshot();
             case "connectedCount": return _sessions.Values.Count(s => s.View.IsConnected);
@@ -271,6 +274,8 @@ internal sealed class EngineHost : ApplicationContext
     }
 
     // ============================================================================================ data
+
+    internal sealed record ClipRect(int X, int Y, int W, int H);
 
     internal sealed record CredentialDto(string Id, string Name, string Username, bool HasPassword);
 

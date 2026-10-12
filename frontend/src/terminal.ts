@@ -125,7 +125,14 @@ export class TermSession {
   }
 
   attach(el: HTMLElement) {
-    if (this.el) return;
+    if (this.el === el) return;
+    if (this.el) {
+      // The pane moved (tab dragged into another tab's split): move the live terminal along.
+      this.el = el;
+      if (this.term.element) el.appendChild(this.term.element);
+      requestAnimationFrame(() => this.fit());
+      return;
+    }
     this.el = el;
     this.term.open(el);
     try {

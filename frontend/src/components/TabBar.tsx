@@ -26,6 +26,10 @@ export function TabBar(props: {
   zoomed: boolean;
   broadcast: boolean;
   onSelect(key: string): void;
+  /** Pointer pressed on a tab: the app turns movement into a tab drag. */
+  onTabPointerDown?(key: string, e: React.PointerEvent): void;
+  draggingKey?: string | null;
+  dropIndex?: number | null; // insertion mark while reordering
   onClose(key: string): void;
   onNewSsh(): void;
   onNewRdp?(): void;
@@ -63,9 +67,13 @@ export function TabBar(props: {
             key={t.key}
             role="tab"
             aria-selected={t.key === props.activeKey}
-            className={`tab ${t.key === props.activeKey ? 'active' : ''}`}
+            data-tab-key={t.key}
+            className={`tab ${t.key === props.activeKey ? 'active' : ''} ${t.key === props.draggingKey ? 'dragging' : ''} ${props.dropIndex === i ? 'drop-before' : ''} ${props.dropIndex === i + 1 && i === props.tabs.length - 1 ? 'drop-after' : ''}`}
             title={`${t.subtitle}${i < 9 ? `  (Ctrl+${i + 1})` : ''}`}
             onClick={() => props.onSelect(t.key)}
+            onPointerDown={(e) => {
+              if (e.button === 0 && !(e.target as HTMLElement).closest('.tab-close')) props.onTabPointerDown?.(t.key, e);
+            }}
             onMouseDown={(e) => {
               if (e.button === 1) {
                 e.preventDefault();

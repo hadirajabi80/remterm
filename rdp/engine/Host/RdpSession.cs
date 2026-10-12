@@ -19,6 +19,7 @@ internal sealed class RdpSession
     private bool _wantVisible;
     private bool _started;
     private bool _locked;
+    private Rectangle[] _clip = [];
 
     public string Id { get; }
     public SessionView View { get; }
@@ -80,6 +81,7 @@ internal sealed class RdpSession
         {
             _host.SetBounds(_bounds.X, _bounds.Y, _bounds.Width, _bounds.Height);
             if (!_host.Visible) _host.Visible = true;
+            ApplyClip();
             Win.BringToTop(_host);
             if (!_started)
             {
@@ -91,6 +93,8 @@ internal sealed class RdpSession
         {
             bool hadFocus = Win.Contains(_host, Win.FocusedWindow());
             _host.Visible = false;
+            _clip = [];
+            ApplyClip();
             if (hadFocus) SetFocus(_engine.Parent); // give the keyboard back to Remterm's web view
         }
     }
@@ -106,7 +110,66 @@ internal sealed class RdpSession
 
     // ------------------------------------------------------------------ pop-out / fullscreen
 
-    public void PopOut() => Detach(fullscreen: false);
+    /// <summary>Menus and popups of Remterm drawn over the session: these areas are cut out of it.</summary>
+    public void SetClip(Rectangle[] rects)
+    {
+        _clip = rects;
+        ApplyClip();
+    }
+
+    private void ApplyClip()
+    {
+        if (!_host.IsHandleCreated) return;
+        if (_clip.Length == 0) { SetWindowRgn(_host.Handle, IntPtr.Zero, true); return; }
+        var rgn = CreateRectRgn(0, 0, _host.Width, _host.Height);
+        foreach (var r in _clip)
+        {
+            var hole = CreateRectRgn(r.X, r.Y, r.Right, r.Bottom);
+            CombineRgn(rgn, rgn, hole, 4 /* RGN_DIFF */);
+            DeleteObject(hole);
+        }
+        if (SetWindowRgn(_host.Handle, rgn, true) == 0) DeleteObject(rgn); // on success Windows owns it
+    }
+
+    /// <summary>Into its own window; at a screen point (a tab dropped outside Remterm) or on Remterm's monitor.</summary>
+    public void PopOut(Point? at = null, bool follow = false)
+    {
+        Detach(fullscreen: false, at, activate: !follow);
+        if (follow && _window != null) StartFollow();
+    }
+
+    // A tab dragged out of Remterm: its new window sticks to the mouse until the button is released.
+    private System.Windows.Forms.Timer? _follow;
+
+    private void StartFollow()
+    {
+        StopFollow();
+        var w = _window!;
+        var grab = new Point(w.Width / 2, Theme.S(16)); // the pointer holds the window by its title bar
+        void Place() => w.Location = new Point(Cursor.Position.X - grab.X, Cursor.Position.Y - grab.Y);
+        Place();
+        _follow = new System.Windows.Forms.Timer { Interval = 10 };
+        _follow.Tick += (_, _) =>
+        {
+            if (_window != w) { StopFollow(); return; }
+            if ((Control.MouseButtons & MouseButtons.Left) == 0)
+            {
+                StopFollow();
+                w.Activate();
+                View.FocusRemote();
+                return;
+            }
+            Place();
+        };
+        _follow.Start();
+    }
+
+    private void StopFollow()
+    {
+        _follow?.Stop();
+        _follow?.Dispose();
+        _follow = null;
+    }
 
     public void ToggleFullscreen()
     {
@@ -114,12 +177,12 @@ internal sealed class RdpSession
         else _window.ToggleFullscreen();
     }
 
-    private void Detach(bool fullscreen)
+    private void Detach(bool fullscreen, Point? at = null, bool activate = true)
     {
         if (_window != null) { _window.Activate(); return; }
         bool wasStarted = _started;
         _host.Controls.Remove(View);
-        var screen = Screen.FromHandle(_engine.Parent);
+        var screen = at is { } pt ? Screen.FromPoint(pt) : Screen.FromHandle(_engine.Parent);
         _window = new SessionWindow(View, v => _engine.ShowFillPicker(this), _engine.ToolTips, fullscreen, dockOnExitFullscreen: fullscreen);
         _window.DockBackRequested += (_, _) => Dock();
         _window.CloseSessionRequested += (_, _) =>
@@ -143,16 +206,20 @@ internal sealed class RdpSession
         _window.StartPosition = FormStartPosition.Manual;
         _window.Location = fullscreen
             ? screen.Bounds.Location
-            : new Point(wa.X + (wa.Width - _window.Width) / 2, wa.Y + (wa.Height - _window.Height) / 2);
+            : at is { } drop
+                ? new Point(Math.Clamp(drop.X - _window.Width / 2, wa.Left, wa.Right - _window.Width), Math.Clamp(drop.Y - Theme.S(20), wa.Top, wa.Bottom - _window.Height))
+                : new Point(wa.X + (wa.Width - _window.Width) / 2, wa.Y + (wa.Height - _window.Height) / 2);
         _host.Visible = false;
+        _window.ShowInactive = !activate; // a tab still being dragged must keep the mouse
         _window.Show();
-        _window.Activate();
+        if (activate) _window.Activate();
         if (!wasStarted) { _started = true; View.Connect(); }
         Report();
     }
 
     public void Dock()
     {
+        StopFollow();
         var w = _window;
         if (w == null) return;
         _window = null;
@@ -237,6 +304,10 @@ internal sealed class RdpSession
     }
 
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hwnd, IntPtr rgn, bool redraw);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+    [DllImport("gdi32.dll")] private static extern int CombineRgn(IntPtr dst, IntPtr a, IntPtr b, int mode);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
 }
 
 /// <summary>

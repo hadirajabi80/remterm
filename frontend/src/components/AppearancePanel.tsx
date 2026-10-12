@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '../api';
-import { useCover } from '../rdp';
+import { useCoverRect } from '../rdp';
 import { BACKGROUNDS, SCHEMES, loadImageFile } from '../themes';
 import type { Appearance, LocalShell } from '../types';
 import { Icon } from './Icon';
@@ -22,7 +22,8 @@ export function AppearancePanel(props: {
   onRdpSettings?(): void;
   onClose(): void;
 }) {
-  useCover();
+  const drawerRef = useRef<HTMLElement>(null);
+  useCoverRect(drawerRef, true, 0);
   const a = props.value;
   const set = <K extends keyof Appearance>(k: K, v: Appearance[K]) => props.onChange({ ...a, [k]: v });
   const fileRef = useRef<HTMLInputElement>(null);
@@ -62,7 +63,7 @@ export function AppearancePanel(props: {
   const hasBg = a.background !== 'none';
 
   return (
-    <aside className="drawer" role="dialog" aria-label="Appearance">
+    <aside ref={drawerRef} className="drawer" role="dialog" aria-label="Appearance">
       <header className="drawer-head">
         <h2>Appearance &amp; typing</h2>
         <button className="icon-btn sm" onClick={props.onClose} aria-label="Close">
