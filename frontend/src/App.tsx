@@ -55,6 +55,8 @@ import { Welcome } from './components/Welcome';
 import { RdpView } from './components/RdpView';
 import { WebRdpView, webRdpSessions } from './components/WebRdpView';
 import { FillPicker, type FillChoice } from './components/FillPicker';
+import { colorCss, hostColor, rdpGroupKey } from './colors';
+import type { TabPreviewData } from './components/TabPreview';
 import type { RdpCtx } from './components/RdpPanel';
 import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
 import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
@@ -927,7 +929,24 @@ export default function App() {
     }
   };
 
-  const rdpAction = (action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad', key = activePane?.key) => {
+  const paneMachine = (key?: string) => {
+    const t = key ? panesRef.current[key]?.target : undefined;
+    return t?.kind === 'rdp' && t.machineId ? rdpDataRef.current?.machines.find((m) => m.id === t.machineId) : undefined;
+  };
+
+  const rdpAction = (action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad' | 'keepalive', key = activePane?.key) => {
+    if (action === 'keepalive') {
+      const m = paneMachine(key);
+      if (!m) return;
+      rdp
+        .saveMachine({ ...m, keepAlive: !m.keepAlive })
+        .then(() => {
+          notify(m.keepAlive ? `Keep connected is off for ${m.name}` : `Keep connected is on for ${m.name} — it reconnects by itself and is not signed out when idle`);
+          return refreshRdp();
+        })
+        .catch((e) => notify(errorMessage(e), 'error'));
+      return;
+    }
     const web = key ? webRdpSessions.get(key) : undefined;
     if (key && panesRef.current[key]?.rdpWeb) {
       if (action === 'reconnect') web?.reconnect();
@@ -997,7 +1016,31 @@ export default function App() {
     if (!cur || STATUS_RANK[p.status] > STATUS_RANK[cur]) rdpOpenStatus[p.target.machineId] = p.status;
   }
 
+  // ---- group colors (tabs + sidebar) ----
+  const groupColors = appearance.groupColors ?? {};
+  const setGroupColor = (key: string, color: string | null) =>
+    setAppearance((a) => {
+      const g = { ...(a.groupColors ?? {}) };
+      if (color) g[key] = color;
+      else delete g[key];
+      return { ...a, groupColors: g };
+    });
+  const paneColor = (p?: Pane): string | undefined => {
+    const t = p?.target;
+    if (t?.kind === 'rdp' && t.machineId) {
+      const m = rdpData?.machines.find((x) => x.id === t.machineId);
+      return m ? colorCss(groupColors[rdpGroupKey(m.group)]) : undefined;
+    }
+    if ((t?.kind === 'ssh' || t?.kind === 'sftp') && t.hostId) {
+      const h = hosts.find((x) => x.id === t.hostId);
+      return h ? hostColor(h, groupColors) : undefined;
+    }
+    return undefined;
+  };
+
   const rdpCtx: RdpCtx = {
+    colors: groupColors,
+    setColor: setGroupColor,
     available: rdpAvailable,
     status: rdpStatus,
     data: rdpData,
@@ -1394,6 +1437,8 @@ export default function App() {
   // ---- sidebar context ----
 
   const ctx: SidebarCtx = {
+    colors: groupColors,
+    setColor: setGroupColor,
     hosts,
     groups,
     snippets,
@@ -1472,6 +1517,19 @@ export default function App() {
 
   // ---- render ----
 
+  /** Tab hover card: the remote screen (as last seen) or the last lines of the terminal. */
+  const tabPreview = async (tabKey: string): Promise<TabPreviewData | null> => {
+    const t = tabsRef.current.find((x) => x.key === tabKey);
+    const p = t && panesRef.current[t.activePane];
+    if (!p) return null;
+    if (p.target.kind === 'rdp') {
+      const image = p.rdpWeb ? (webRdpSessions.get(p.key)?.thumb() ?? '') : await rdp.thumb(p.key).catch(() => '');
+      return image ? { image } : null;
+    }
+    const lines = sessions.current.get(p.key)?.previewLines(12);
+    return lines?.length ? { lines } : null;
+  };
+
   const tabViews: TabView[] = useMemo(
     () =>
       tabs.map((t) => {
@@ -1489,9 +1547,10 @@ export default function App() {
           local: p?.target.kind === 'local',
           kind: p?.target.kind ?? 'ssh',
           unread: t.key !== activeKey && keysList.some((k) => panes[k]?.unread),
+          color: paneColor(p) ?? keysList.map((k) => paneColor(panes[k])).find(Boolean),
         };
       }),
-    [tabs, panes, activeKey],
+    [tabs, panes, activeKey, rdpData, hosts, appearance.groupColors], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const bgCss = backgroundCss(appearance);
@@ -1509,6 +1568,7 @@ export default function App() {
           pane={pane}
           request={{ machineId: t.machineId, selector: t.selector, machine: t.adhoc ? { name: t.adhoc.name, ip: t.adhoc.ip, mode: 'direct' } : undefined }}
           active={active && shown}
+          keepAlive={!!paneMachine(pane.key)?.keepAlive}
           onStatus={(status, message) => patchPane(pane.key, { status, ...(message !== undefined ? { message } : {}) })}
           onClose={() => closePane(pane.key)}
         />
@@ -1550,7 +1610,16 @@ export default function App() {
           onClose={requestCloseTab}
           onNewSsh={() => setPaletteOpen(true)}
           onNewRdp={rdpAvailable ? () => (rdpData ? setPaletteOpen(true) : showRdpPanel()) : undefined}
-          rdp={activeRdp ? { connected: activeRdp.status === 'connected', mode: activeRdp.rdpMode ?? 'docked', web: !!activeRdp.rdpWeb } : null}
+          rdp={
+            activeRdp
+              ? {
+                  connected: activeRdp.status === 'connected',
+                  mode: activeRdp.rdpMode ?? 'docked',
+                  web: !!activeRdp.rdpWeb,
+                  keepAlive: paneMachine(activeRdp.key) ? !!paneMachine(activeRdp.key)!.keepAlive : null,
+                }
+              : null
+          }
           onRdp={(a) => rdpAction(a)}
           onNewLocal={(id) => openLocal(id)}
           onSplit={(d) => split(d)}
@@ -1558,6 +1627,7 @@ export default function App() {
           onToggleBroadcast={toggleBroadcast}
           onAppearance={() => setAppearanceOpen((v) => !v)}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          preview={tabPreview}
         />
         <div ref={termAreaRef} className={`term-area ${prodVisible ? 'prod' : ''} ${bgCss ? 'has-bg' : ''}`}>
           {bgCss && tabs.length > 0 && (

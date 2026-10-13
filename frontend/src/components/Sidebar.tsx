@@ -3,7 +3,8 @@ import { history } from '../history';
 import type { GroupConfig, Host, Identity, KeyItem, Snippet, Tunnel, TunnelStatus, Workspace } from '../types';
 import { buildGroupTree, groupBy, hostLabel, matches, timeAgo, type GroupNode } from '../util';
 import { Icon } from './Icon';
-import { Menu, type MenuItem } from './Menu';
+import { colorCss, sshGroupKey } from '../colors';
+import { Menu, type MenuEntry, type MenuItem } from './Menu';
 import { KeychainPanel, KnownHostsPanel, LogsPanel, TunnelsPanel, WorkspacesPanel } from './panels';
 import { RdpPanel, type RdpCtx } from './RdpPanel';
 import { SnippetInfo } from './SnippetInfo';
@@ -51,6 +52,9 @@ export interface SidebarCtx {
   deleteWorkspace(w: Workspace): void;
   openLog(id: string, title: string): void;
   notify(text: string, kind?: 'info' | 'error'): void;
+  /** Group colors ('ssh:<path>' -> color id). */
+  colors: Record<string, string>;
+  setColor(key: string, color: string | null): void;
 }
 
 const NAV: { id: Panel; icon: string; label: string }[] = [
@@ -123,7 +127,7 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
   const [query, setQuery] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<{ x: number; y: number; items: (MenuItem | 'sep')[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
   const [addMenu, setAddMenu] = useState(false);
   const allTags = [...new Set(ctx.hosts.flatMap((h) => h.tags ?? []))].sort();
   const filtering = !!query || tags.length > 0;
@@ -150,10 +154,12 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
     { label: 'Duplicate', icon: <Icon name="copy" size={13} />, onClick: () => ctx.duplicateHost(h) },
     { label: 'Delete', icon: <Icon name="trash" size={13} />, onClick: () => ctx.deleteHost(h) },
   ];
-  const groupMenu = (path: string): (MenuItem | 'sep')[] => [
+  const groupMenu = (path: string): MenuEntry[] => [
     { label: 'Connect to all hosts', icon: <Icon name="play" size={12} />, onClick: () => ctx.connectGroup(path) },
     { label: 'New host in group', icon: <Icon name="plus" size={13} />, onClick: () => ctx.editHost(null, path) },
     { label: 'New subgroup', icon: <Icon name="folder" size={13} />, onClick: () => ctx.editGroup(path + '/') },
+    'sep',
+    { swatches: true, label: 'Color — shown on its tabs', value: ctx.colors[sshGroupKey(path)] ?? null, onPick: (c) => ctx.setColor(sshGroupKey(path), c) },
     'sep',
     { label: 'Group settings…', icon: <Icon name="gear" size={13} />, onClick: () => ctx.editGroup(path) },
   ];
@@ -225,6 +231,9 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
           <span className="chev">
             <Icon name="chevron" size={12} />
           </span>
+          {colorCss(ctx.colors[sshGroupKey(node.path)]) && (
+            <span className="group-dot" style={{ '--grp': colorCss(ctx.colors[sshGroupKey(node.path)]) } as React.CSSProperties} />
+          )}
           <span className="group-name">{node.name}</span>
           {hasSettings && (
             <span className="group-flag" title="Has group settings">

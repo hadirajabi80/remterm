@@ -194,6 +194,7 @@ export interface Machine {
   favorite: boolean;
   lastUsed: string | null; // ISO time
   notes: string;
+  keepAlive?: boolean; // reconnect when dropped, no idle sign-out
 }
 
 export interface RdpCredential {
@@ -304,4 +305,5 @@ export interface Appearance {
   blur: number; // px
   fontSize: number;
   ui?: 'dark' | 'light' | 'system'; // app theme
+  groupColors?: Record<string, string>; // 'rdp:<group>' / 'ssh:<path>' -> color id (colors.ts)
 }

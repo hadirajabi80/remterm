@@ -38,6 +38,7 @@ type rdpMachine struct {
 	Favorite     bool    `json:"favorite"`
 	LastUsed     *string `json:"lastUsed"`
 	Notes        string  `json:"notes"`
+	KeepAlive    bool    `json:"keepAlive"`
 }
 
 type rdpCredential struct {

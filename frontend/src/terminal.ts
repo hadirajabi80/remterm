@@ -175,6 +175,17 @@ export class TermSession {
     }
   }
 
+  /** The last non-empty lines up to the cursor (tab hover preview). */
+  previewLines(max: number): string[] {
+    const buf = this.term.buffer.active;
+    const out: string[] = [];
+    for (let y = buf.baseY + buf.cursorY; y >= 0 && out.length < max; y--) {
+      const line = buf.getLine(y)?.translateToString(true) ?? '';
+      if (out.length || line.trim()) out.unshift(line);
+    }
+    return out;
+  }
+
   /** Sends text to the shell. Returns false if not connected. */
   send(text: string): boolean {
     if (!this.connected || !this.sessionId) return false;

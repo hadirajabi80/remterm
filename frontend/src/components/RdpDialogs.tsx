@@ -184,6 +184,13 @@ export function MachineDialog(props: {
           <input type="checkbox" checked={m.favorite} onChange={(e) => set('favorite', e.target.checked)} />
           ★ Favorite
         </label>
+        <label className="check span2 keep-check">
+          <input type="checkbox" checked={!!m.keepAlive} onChange={(e) => set('keepAlive', e.target.checked)} />
+          <span>
+            Keep connected
+            <span className="hint"> — reconnect by itself when the connection drops, and stop the server signing you out when idle</span>
+          </span>
+        </label>
         <label className="field span2">
           Notes
           <textarea className="input" rows={2} value={m.notes} onChange={(e) => set('notes', e.target.value)} />

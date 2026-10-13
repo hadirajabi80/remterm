@@ -59,6 +59,8 @@ export interface WebRdpHandle {
   disconnect(): void;
   ctrlAltDel(): void;
   focus(): void;
+  /** Small JPEG of the remote screen for the tab's hover preview ('' when there is none). */
+  thumb(): string;
 }
 export const webRdpSessions = new Map<string, WebRdpHandle>();
 
@@ -104,6 +106,8 @@ export function WebRdpView(props: {
   pane: Pane;
   request: Omit<OpenRequest, 'id'>;
   active: boolean;
+  /** Keep connected: reconnect when the session drops and keep it from idling out. */
+  keepAlive?: boolean;
   onStatus(status: TabStatus, message?: string): void;
   onClose(): void;
 }) {
@@ -113,6 +117,10 @@ export function WebRdpView(props: {
   const typed = useRef<{ username: string; password: string } | null>(null); // from the login form, for this tab
   const ui = useRef<any>(null);
   const status = props.pane.status;
+  const keepAlive = useRef(!!props.keepAlive);
+  keepAlive.current = !!props.keepAlive;
+  const userEnded = useRef(false); // Disconnect pressed: no automatic reconnect
+  const retries = useRef(0);
 
   useEffect(() => {
     const el = host.current!;
@@ -121,7 +129,25 @@ export function WebRdpView(props: {
     let frame: HTMLIFrameElement | null = null;
     let mode: LoginForm['mode'] = 'direct';
     let loginUser = '';
-    props.onStatus('connecting', 'Connecting…');
+    let retryTimer = 0;
+    let idleTimer = 0;
+    userEnded.current = false;
+    props.onStatus(retries.current ? 'reconnecting' : 'connecting', 'Connecting…');
+
+    // Keep connected: try again after 5, 10, 20, 40, then every 60 seconds.
+    const retry = (why: string) => {
+      if (cancelled || !keepAlive.current || userEnded.current || retries.current >= 15) return false;
+      let left = Math.min(60, 5 << Math.min(retries.current, 4));
+      retries.current++;
+      const show = () => props.onStatus('reconnecting', `${why} — keep connected is on, reconnecting in ${left} s…`);
+      show();
+      retryTimer = window.setInterval(() => {
+        if (--left > 0) return show();
+        window.clearInterval(retryTimer);
+        setAttempt((n) => n + 1);
+      }, 1000);
+      return true;
+    };
 
     (async () => {
       const info = await rdp.webSession({ ...props.request, ...(typed.current ?? {}) });
@@ -181,9 +207,27 @@ export function WebRdpView(props: {
       user.setVisibility(true);
       user.setScale(SCALE_FIT);
       setLogin(null);
+      retries.current = 0;
       props.onStatus('connected', '');
+
+      // Nobody working in the session for a while: a tiny mouse move keeps the server from signing it out.
+      let lastInput = Date.now();
+      for (const ev of ['keydown', 'mousedown', 'mousemove', 'wheel']) win.addEventListener(ev, (e: Event) => e.isTrusted && (lastInput = Date.now()), true);
+      idleTimer = window.setInterval(() => {
+        if (!keepAlive.current || Date.now() - lastInput < 240_000) return;
+        lastInput = Date.now();
+        const canvas = (comp?.shadowRoot?.querySelector('canvas') ?? win.document.querySelector('canvas')) as HTMLCanvasElement | null;
+        const r = canvas?.getBoundingClientRect();
+        if (!canvas || !r) return;
+        for (const dx of [1, 0]) {
+          canvas.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, composed: true, clientX: r.left + r.width / 2 + dx, clientY: r.top + r.height / 2 }));
+        }
+      }, 20_000);
+
       const end = await session.run();
-      if (!cancelled) props.onStatus('disconnected', `Session ended: ${end?.reason?.() ?? 'disconnected'}`);
+      window.clearInterval(idleTimer);
+      const why = `Session ended: ${end?.reason?.() ?? 'disconnected'}`;
+      if (!cancelled && !retry(why)) props.onStatus('disconnected', why);
     })().catch((e) => {
       if (cancelled) return;
       const err = describeError(e);
@@ -191,11 +235,13 @@ export function WebRdpView(props: {
         // Ask again right here instead of sending the user to the settings.
         setLogin({ username: typed.current?.username ?? loginUser, password: '', remember: true, error: err.text, mode });
         props.onStatus('disconnected', err.text);
-      } else props.onStatus('disconnected', err.text);
+      } else if (!retry(err.text)) props.onStatus('disconnected', err.text);
     });
 
     return () => {
       cancelled = true;
+      window.clearInterval(retryTimer);
+      window.clearInterval(idleTimer);
       try {
         ui.current?.shutdown();
       } catch {
@@ -242,9 +288,27 @@ export function WebRdpView(props: {
   useEffect(() => {
     webRdpSessions.set(props.id, {
       reconnect: () => setAttempt((n) => n + 1),
-      disconnect: () => ui.current?.shutdown(),
+      disconnect: () => {
+        userEnded.current = true;
+        ui.current?.shutdown();
+      },
       ctrlAltDel: () => ui.current?.ctrlAltDel(),
       focus,
+      thumb: () => {
+        try {
+          const doc = host.current?.querySelector('iframe')?.contentDocument;
+          const comp = doc?.querySelector('iron-remote-desktop');
+          const src = (comp?.shadowRoot?.querySelector('canvas') ?? doc?.querySelector('canvas')) as HTMLCanvasElement | null;
+          if (!src || !src.width || !src.height) return '';
+          const out = document.createElement('canvas');
+          out.width = 420;
+          out.height = Math.round((src.height * 420) / src.width);
+          out.getContext('2d')?.drawImage(src, 0, 0, out.width, out.height);
+          return out.toDataURL('image/jpeg', 0.78);
+        } catch {
+          return '';
+        }
+      },
     });
     return () => {
       webRdpSessions.delete(props.id);
@@ -334,8 +398,8 @@ export function WebRdpView(props: {
             ) : (
               <>
                 <div className="rdp-spinner" />
-                <div className="rdp-card-title">Connecting to {props.pane.title}…</div>
-                <div className="rdp-card-text">{props.pane.subtitle}</div>
+                <div className="rdp-card-title">{status === 'reconnecting' ? 'Reconnecting to' : 'Connecting to'} {props.pane.title}…</div>
+                <div className="rdp-card-text">{status === 'reconnecting' && props.pane.message ? props.pane.message : props.pane.subtitle}</div>
               </>
             )}
           </div>

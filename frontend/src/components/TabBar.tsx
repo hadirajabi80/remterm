@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { LocalShell, TabStatus } from '../types';
 import { Icon } from './Icon';
 import { Menu, type MenuItem } from './Menu';
+import { TabPreview, type TabPreviewData } from './TabPreview';
 
 /** What the tab strip shows for a tab (derived from its active pane). */
 export interface TabView {
@@ -15,6 +16,7 @@ export interface TabView {
   local: boolean;
   kind: string; // pane type of the active pane
   unread: boolean; // new output in a pane you are not looking at
+  color?: string; // group color (CSS)
 }
 
 export function TabBar(props: {
@@ -34,16 +36,29 @@ export function TabBar(props: {
   onNewSsh(): void;
   onNewRdp?(): void;
   /** Tools for the active Remote Desktop pane (null when the active pane is not RDP). */
-  rdp: { connected: boolean; mode: string; web?: boolean } | null;
-  onRdp(action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad'): void;
+  rdp: { connected: boolean; mode: string; web?: boolean; keepAlive?: boolean | null } | null;
+  onRdp(action: 'fill' | 'fullscreen' | 'popout' | 'reconnect' | 'disconnect' | 'cad' | 'keepalive'): void;
   onNewLocal(shellId: string): void;
   onSplit(dir: 'row' | 'col'): void;
   onToggleZoom(): void;
   onToggleBroadcast(): void;
   onAppearance(): void;
   onToggleSidebar(): void;
+  /** Hover preview of a tab that is not shown (remote screen or last terminal lines). */
+  preview?(key: string): Promise<TabPreviewData | null>;
 }) {
   const [menu, setMenu] = useState(false);
+  const [hover, setHover] = useState<{ key: string; rect: DOMRect } | null>(null);
+  const hoverTimer = useRef(0);
+  const endHover = () => {
+    window.clearTimeout(hoverTimer.current);
+    setHover(null);
+  };
+  useEffect(() => endHover, []);
+  useEffect(() => {
+    if (props.draggingKey) endHover();
+  }, [props.draggingKey]);
+  const hovered = hover && props.tabs.find((t) => t.key === hover.key);
   const menuItems: (MenuItem | 'sep')[] = [
     ...props.shells.map((s, i) => ({
       label: s.name,
@@ -68,10 +83,22 @@ export function TabBar(props: {
             role="tab"
             aria-selected={t.key === props.activeKey}
             data-tab-key={t.key}
-            className={`tab ${t.key === props.activeKey ? 'active' : ''} ${t.key === props.draggingKey ? 'dragging' : ''} ${props.dropIndex === i ? 'drop-before' : ''} ${props.dropIndex === i + 1 && i === props.tabs.length - 1 ? 'drop-after' : ''}`}
-            title={`${t.subtitle}${i < 9 ? `  (Ctrl+${i + 1})` : ''}`}
-            onClick={() => props.onSelect(t.key)}
+            className={`tab ${t.color ? 'colored' : ''} ${t.key === props.activeKey ? 'active' : ''} ${t.key === props.draggingKey ? 'dragging' : ''} ${props.dropIndex === i ? 'drop-before' : ''} ${props.dropIndex === i + 1 && i === props.tabs.length - 1 ? 'drop-after' : ''}`}
+            style={t.color ? ({ '--tab-color': t.color } as React.CSSProperties) : undefined}
+            title={props.preview && t.key !== props.activeKey ? undefined : `${t.subtitle}${i < 9 ? `  (Ctrl+${i + 1})` : ''}`}
+            onClick={() => {
+              endHover();
+              props.onSelect(t.key);
+            }}
+            onMouseEnter={(e) => {
+              window.clearTimeout(hoverTimer.current);
+              if (!props.preview || props.draggingKey || t.key === props.activeKey) return;
+              const el = e.currentTarget;
+              hoverTimer.current = window.setTimeout(() => setHover({ key: t.key, rect: el.getBoundingClientRect() }), 450);
+            }}
+            onMouseLeave={endHover}
             onPointerDown={(e) => {
+              endHover();
               if (e.button === 0 && !(e.target as HTMLElement).closest('.tab-close')) props.onTabPointerDown?.(t.key, e);
             }}
             onMouseDown={(e) => {
@@ -81,7 +108,11 @@ export function TabBar(props: {
               }
             }}
           >
-            {t.env && <span className={`tab-env env-${t.env}`} />}
+            {t.color ? (
+              <span className="tab-env" style={{ '--env': t.color } as React.CSSProperties} />
+            ) : (
+              t.env && <span className={`tab-env env-${t.env}`} />
+            )}
             <span className={`sdot ${t.status}`} />
             {t.local && <Icon name="terminal" size={12} />}
             {t.kind === 'sftp' && <Icon name="folder" size={12} />}
@@ -108,6 +139,9 @@ export function TabBar(props: {
           </div>
         ))}
       </div>
+      {hover && hovered && props.preview && (
+        <TabPreview key={hover.key} anchor={hover.rect} title={hovered.title} subtitle={hovered.subtitle} load={() => props.preview!(hover.key)} />
+      )}
       <div className="menu-anchor">
         <button className={`icon-btn ${menu ? 'on' : ''}`} title="New tab" onClick={() => setMenu((v) => !v)}>
           <Icon name="plus" />
@@ -117,6 +151,15 @@ export function TabBar(props: {
 
       <div className="tabbar-spacer" />
 
+      {props.rdp && props.rdp.keepAlive != null && (
+        <button
+          className={`icon-btn ${props.rdp.keepAlive ? 'on' : ''}`}
+          title={props.rdp.keepAlive ? 'Keep connected is on — click to turn off' : 'Keep connected: reconnect by itself and never signed out when idle (off)'}
+          onClick={() => props.onRdp('keepalive')}
+        >
+          <Icon name="pulse" />
+        </button>
+      )}
       {props.rdp?.web && (
         <div className="tool-group">
           <button className="icon-btn" title="Send Ctrl+Alt+Del" disabled={!props.rdp.connected} onClick={() => props.onRdp('cad')}>

@@ -4,7 +4,8 @@ import { lastUsedMs, machineDetail } from '../rdp';
 import { NO_CREDENTIAL, type Machine, type RdpData, type RdpStatus, type TabStatus } from '../types';
 import { matches } from '../util';
 import { Icon } from './Icon';
-import { Menu, type MenuItem } from './Menu';
+import { colorCss, rdpGroupKey } from '../colors';
+import { Menu, type MenuEntry, type MenuItem } from './Menu';
 import type { RdpSettingsTab } from './RdpDialogs';
 import { UnlockForm } from './RdpDialogs';
 import { SearchBox } from './Sidebar';
@@ -31,6 +32,9 @@ export interface RdpCtx {
   lock(): void;
   refresh(): void;
   notify(text: string, kind?: 'info' | 'error'): void;
+  /** Group colors ('rdp:<group>' -> color id). */
+  colors: Record<string, string>;
+  setColor(key: string, color: string | null): void;
 }
 
 const UNGROUPED = 'Ungrouped';
@@ -38,7 +42,7 @@ const UNGROUPED = 'Ungrouped';
 export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<{ x: number; y: number; items: (MenuItem | 'sep')[] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuEntry[] } | null>(null);
   const [addMenu, setAddMenu] = useState(false);
 
   if (!ctx.available) {
@@ -124,6 +128,12 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
     'sep',
     { label: 'Edit…', icon: <Icon name="edit" size={13} />, hint: 'F2', onClick: () => ctx.edit(m) },
     { label: m.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <Icon name="star" size={13} />, onClick: () => ctx.save({ ...m, favorite: !m.favorite }) },
+    {
+      label: 'Keep connected',
+      hint: m.keepAlive ? 'on' : 'off',
+      icon: m.keepAlive ? <Icon name="check" size={13} /> : <Icon name="pulse" size={13} />,
+      onClick: () => ctx.save({ ...m, keepAlive: !m.keepAlive }),
+    },
     { label: 'Copy IP', icon: <Icon name="copy" size={13} />, disabled: !m.ip, onClick: () => void clipboard.write(m.ip) },
     ...(m.mode === 'bastion'
       ? [{ label: 'Copy WALLIX target', icon: <Icon name="copy" size={13} />, disabled: !m.target, onClick: () => void clipboard.write(m.target) }]
@@ -136,10 +146,12 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
     { label: 'Delete', icon: <Icon name="trash" size={13} />, hint: 'Del', onClick: () => ctx.remove([m], `"${m.name}"`) },
   ];
 
-  const groupMenu = (g: string, items: Machine[]): (MenuItem | 'sep')[] => [
+  const groupMenu = (g: string, items: Machine[]): MenuEntry[] => [
     { label: `Connect all (${items.length})`, icon: <Icon name="play" size={12} />, onClick: () => ctx.connectAll(items) },
     { label: 'New machine in group', icon: <Icon name="plus" size={13} />, onClick: () => ctx.edit(null, g === UNGROUPED ? '' : g) },
     { label: 'Rename group…', icon: <Icon name="edit" size={13} />, onClick: () => ctx.renameGroup(g) },
+    'sep',
+    { swatches: true, label: 'Color — shown on its tabs', value: ctx.colors[rdpGroupKey(g)] ?? null, onPick: (c) => ctx.setColor(rdpGroupKey(g), c) },
     'sep',
     { label: `Delete all ${items.length} machines…`, icon: <Icon name="trash" size={13} />, onClick: () => ctx.remove(items, `all ${items.length} machines in "${g}"`) },
   ];
@@ -175,6 +187,11 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
             {m.name}
             {m.mode === 'direct' && <span className="mini-badge proto">DIRECT</span>}
             {m.favorite && <span className="fav-star">★</span>}
+            {m.keepAlive && (
+              <span className="keep-badge" title="Keep connected is on">
+                <Icon name="pulse" size={11} />
+              </span>
+            )}
           </div>
           <div className="row-sub">{m.mode === 'direct' ? m.ip : m.ip || m.target || 'WALLIX list'}</div>
         </div>
@@ -266,6 +283,9 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
                 <span className="chev">
                   <Icon name="chevron" size={12} />
                 </span>
+                {sec.group && colorCss(ctx.colors[rdpGroupKey(sec.group)]) && (
+                  <span className="group-dot" style={{ '--grp': colorCss(ctx.colors[rdpGroupKey(sec.group)]) } as React.CSSProperties} />
+                )}
                 <span className="group-name">{sec.title}</span>
                 <span className="group-count">{sec.items.length}</span>
                 {sec.group && (

@@ -83,6 +83,64 @@ internal sealed class SessionView : UserControl
 
         _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); SyncDisplaySize(); };
         _autoTypeTimer.Tick += AutoTypeTick;
+        _keepTimer.Tick += (_, _) => KeepAliveTick();
+        _keepTimer.Start();
+        _retryTimer.Tick += (_, _) => RetryTick();
+    }
+
+    // ---------------------------------------------------------------- keep connected (per machine, off by default)
+
+    private readonly System.Windows.Forms.Timer _keepTimer = new() { Interval = 20_000 };
+    private readonly System.Windows.Forms.Timer _retryTimer = new() { Interval = 1000 };
+    private DateTime _lastActivity = DateTime.UtcNow;
+    private bool _userDisconnect;
+    private int _retries, _retryLeft;
+    private string _retryDetail = "";
+    private const int NudgeAfterSeconds = 240;
+
+    /// <summary>
+    /// Servers (and WALLIX) sign idle sessions out. While nobody works in this session, a Shift tap
+    /// every few minutes counts as activity. Someone typing in it is activity already: no tap then.
+    /// </summary>
+    private void KeepAliveTick()
+    {
+        if (!Machine.KeepAlive || !IsConnected || _rdp == null || _typing) return;
+        if (Win.Contains(this, Win.FocusedWindow()) && Win.IdleMs() < 30_000)
+        {
+            _lastActivity = DateTime.UtcNow;
+            return;
+        }
+        if ((DateTime.UtcNow - _lastActivity).TotalSeconds < NudgeAfterSeconds) return;
+        _lastActivity = DateTime.UtcNow;
+        try
+        {
+            KeyTyper.SendCom(_rdp.NonScriptable, KeyTyper.KeyPress(0x2A)); // Shift: changes nothing on screen
+            Diag.Log($"[{Machine.Name}] keep-alive tap");
+        }
+        catch (Exception ex) { Diag.Log($"[{Machine.Name}] keep-alive failed: {ex.Message}"); }
+    }
+
+    /// <summary>Dropped while "keep connected" is on: connect again after 5, 10, 20, 40, then every 60 seconds.</summary>
+    private bool ScheduleRetry(int reason, string detail)
+    {
+        // 1 = you disconnected, 2 = signed out / disconnected from inside the session: those are on purpose.
+        if (!Machine.KeepAlive || _userDisconnect || _closing || reason is 1 or 2 || _retries >= 15) return false;
+        _retryLeft = Math.Min(60, 5 << Math.Min(_retries, 4));
+        _retries++;
+        _retryDetail = detail;
+        ShowRetry();
+        _retryTimer.Start();
+        return true;
+    }
+
+    private void ShowRetry() =>
+        ShowOverlay($"{Machine.Name} disconnected", $"{_retryDetail}\n\nKeep connected is on — reconnecting in {_retryLeft} s…", reconnect: true);
+
+    private void RetryTick()
+    {
+        if (--_retryLeft > 0) { ShowRetry(); return; }
+        _retryTimer.Stop();
+        Connect();
     }
 
     private static string Describe(Machine m) =>
@@ -92,6 +150,8 @@ internal sealed class SessionView : UserControl
 
     public void Connect()
     {
+        _retryTimer.Stop();
+        _userDisconnect = false;
         _closing = false;
         _loggedIn = false;
         IsConnected = false;
@@ -163,6 +223,10 @@ internal sealed class SessionView : UserControl
             adv.RedirectDrives = s.RedirectDrives;
             adv.EnableAutoReconnect = true;
             adv.MaxReconnectAttempts = 20;
+            if (Machine.KeepAlive)
+            {
+                try { adv.keepAliveInterval = 60_000; } catch { /* older control */ }
+            }
             adv.BitmapPersistence = 1;
             adv.GrabFocusOnConnect = true;
             if (s.ForceUsKeyboard) adv.KeyBoardLayoutStr = "0x00000409";
@@ -217,6 +281,8 @@ internal sealed class SessionView : UserControl
     private void OnLoginComplete(object? sender, EventArgs e)
     {
         _loggedIn = true;
+        _retries = 0;
+        _lastActivity = DateTime.UtcNow;
         _resizeTimer.Stop();
         _resizeTimer.Start();
     }
@@ -262,6 +328,7 @@ internal sealed class SessionView : UserControl
                 3 => "The server ended the session.",
                 _ => $"Disconnected (code {reason}).",
             };
+        if (ScheduleRetry(reason, detail)) return;
         ShowOverlay($"{Machine.Name} disconnected", detail, reconnect: true);
     }
 
@@ -296,6 +363,8 @@ internal sealed class SessionView : UserControl
 
     public void Disconnect()
     {
+        _userDisconnect = true;
+        _retryTimer.Stop();
         if (_rdp != null && IsConnected)
         {
             try { _rdp.Ocx.Disconnect(); } catch { /* ignore */ }
@@ -306,6 +375,7 @@ internal sealed class SessionView : UserControl
     public void CloseSession()
     {
         _closing = true;
+        _retryTimer.Stop();
         StopAutoType();
         _resizeTimer.Stop();
         if (_rdp != null && IsConnected)
@@ -853,6 +923,8 @@ internal sealed class SessionView : UserControl
         {
             _resizeTimer.Dispose();
             _autoTypeTimer.Dispose();
+            _keepTimer.Dispose();
+            _retryTimer.Dispose();
             _closeTimeout?.Dispose();
             DestroyRdp();
         }

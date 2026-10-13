@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { GROUP_COLORS } from '../colors';
 import { useCoverRect } from '../rdp';
 
 export interface MenuItem {
@@ -8,6 +9,16 @@ export interface MenuItem {
   disabled?: boolean;
   onClick(): void;
 }
+
+/** A row of color dots (group colors); null = no color. */
+export interface MenuSwatches {
+  swatches: true;
+  label: string;
+  value: string | null;
+  onPick(id: string | null): void;
+}
+
+export type MenuEntry = MenuItem | MenuSwatches | 'sep';
 
 /**
  * Small dropdown. Anchored below its parent (which must be position:
@@ -19,7 +30,7 @@ export function Menu({
   align = 'left',
   at,
 }: {
-  items: (MenuItem | 'sep')[];
+  items: MenuEntry[];
   onClose(): void;
   align?: 'left' | 'right';
   at?: { x: number; y: number };
@@ -66,6 +77,32 @@ export function Menu({
       {items.map((it, i) =>
         it === 'sep' ? (
           <div key={i} className="menu-sep" />
+        ) : 'swatches' in it ? (
+          <div key={i} className="menu-swatches">
+            <span className="menu-label">{it.label}</span>
+            <div className="swatch-row">
+              <button
+                className={`swatch none ${it.value ? '' : 'on'}`}
+                title="No color"
+                onClick={() => {
+                  onClose();
+                  it.onPick(null);
+                }}
+              />
+              {GROUP_COLORS.map((c) => (
+                <button
+                  key={c.id}
+                  className={`swatch ${it.value === c.id ? 'on' : ''}`}
+                  title={c.label}
+                  style={{ background: c.css }}
+                  onClick={() => {
+                    onClose();
+                    it.onPick(c.id);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
         ) : (
           <button
             key={i}

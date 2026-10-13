@@ -3323,3 +3323,121 @@ body.tab-dragging * {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- group colors ---- */
+.menu-swatches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+.menu-swatches .menu-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.swatch-row {
+  display: flex;
+  gap: 6px;
+}
+.swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.swatch:hover {
+  transform: scale(1.12);
+}
+.swatch.on {
+  border-color: var(--text);
+}
+.swatch.none {
+  background: linear-gradient(135deg, transparent 45%, var(--danger) 45%, var(--danger) 55%, transparent 55%), var(--panel-2);
+}
+.group-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grp);
+}
+.tab.colored {
+  background: color-mix(in srgb, var(--tab-color) 9%, transparent);
+}
+.tab.colored.active {
+  background: color-mix(in srgb, var(--tab-color) 12%, var(--term-bg));
+}
+.tab.colored .tab-env {
+  height: 3px;
+  left: 0;
+  right: 0;
+  border-radius: 8px 8px 0 0;
+  top: -1px;
+}
+.keep-badge {
+  display: inline-grid;
+  margin-left: 4px;
+  color: var(--ok);
+  vertical-align: middle;
+}
+.keep-check {
+  align-items: flex-start;
+}
+/* ---- tab hover preview ---- */
+.tab-preview {
+  position: fixed;
+  z-index: 60;
+  overflow: hidden;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: tp-in 0.12s ease-out;
+}
+@keyframes tp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.tp-head {
+  padding: 8px 10px 6px;
+}
+.tp-title {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tp-sub {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tp-image {
+  display: block;
+  width: 100%;
+  border-top: 1px solid var(--border);
+}
+.tp-lines {
+  margin: 0;
+  max-height: 190px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--term-bg);
+  color: var(--text-2);
+  font: 11px/1.35 var(--font-mono);
+  white-space: pre;
+}
+.tp-empty {
+  padding: 0 10px 8px;
+  color: var(--muted);
+}
