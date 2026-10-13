@@ -15,8 +15,14 @@ export function StatusBar(props: {
   broadcast: boolean;
   hostCount: number;
   fontSize: number;
+  version?: string;
 }) {
   const { pane } = props;
+  const version = props.version && (
+    <span className="st-version" title="Remterm version (Settings → General to update)">
+      {/^\d/.test(props.version) ? `v${props.version}` : props.version}
+    </span>
+  );
   if (!pane) {
     return (
       <footer className="statusbar">
@@ -24,6 +30,7 @@ export function StatusBar(props: {
         <span>{props.hostCount} saved hosts</span>
         <span className="spacer" />
         <span>Ctrl+Shift+P for commands</span>
+        {version}
       </footer>
     );
   }
@@ -61,6 +68,7 @@ export function StatusBar(props: {
           <span>{props.fontSize}px</span>
         </>
       )}
+      {version}
     </footer>
   );
 }

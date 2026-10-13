@@ -1,6 +1,6 @@
 namespace RemoteHub.UI;
 
-internal sealed record FillEntry(string Label, string Sub, string Login, string Password, bool IsBastion = false);
+internal sealed record FillEntry(string Key, string Label, string Sub, string Login, string Password, bool IsBastion = false);
 
 /// <summary>
 /// A quick list of saved logins. The user picks one (click, Enter, or number key) and it is typed into
@@ -61,38 +61,25 @@ internal sealed class CredentialPicker : Form
         base.OnShown(e);
         Activate();
         _search.Focus();
-        // The session behind is disabled while this is open, so a click there never deactivates us:
-        // watch the mouse and close on any press outside.
-        bool wasDown = true;
-        _outside.Tick += (_, _) =>
-        {
-            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0;
-            if (down && !wasDown && !Bounds.Contains(Cursor.Position) && DialogResult == DialogResult.None)
-            {
-                DialogResult = DialogResult.Cancel;
-                Close();
-            }
-            wasDown = down;
-        };
-        _outside.Start();
-    }
-
-    private readonly System.Windows.Forms.Timer _outside = new() { Interval = 40 };
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
-
-    protected override void OnFormClosed(FormClosedEventArgs e)
-    {
-        _outside.Dispose();
-        base.OnFormClosed(e);
     }
 
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        if (DialogResult == DialogResult.None) { DialogResult = DialogResult.Cancel; Close(); }
+        if (DialogResult != DialogResult.None) return;
+        DialogResult = DialogResult.Cancel;
+        // A click inside Remterm (e.g. on the remote screen, which belongs to this process) must leave
+        // Remterm in front, not whatever window Windows would activate next.
+        var owner = GetWindow(Handle, 4 /* GW_OWNER */);
+        bool insideOwner = owner != IntPtr.Zero && GetAncestor(WindowFromPoint(Cursor.Position), 2 /* GA_ROOT */) == owner;
+        Close();
+        if (insideOwner) SetForegroundWindow(owner);
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr h);
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {

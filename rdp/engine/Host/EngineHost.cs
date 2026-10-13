@@ -155,6 +155,7 @@ internal sealed class EngineHost : ApplicationContext
             case "focus": Session(p).Focus(); return null;
             case "refresh": Session(p).Refresh(); return null;
             case "fill": ShowFillPicker(Session(p)); return null;
+            case "fillWith": FillWith(Session(p), Str(p, "key")); return null;
             case "fullscreen": Session(p).ToggleFullscreen(); return null;
             case "popout":
                 Session(p).PopOut(p.TryGetProperty("x", out _) ? new Point(Int(p, "x"), Int(p, "y")) : null, Bool(p, "follow"));
@@ -162,6 +163,7 @@ internal sealed class EngineHost : ApplicationContext
             case "clip": Session(p).SetClip(Get<ClipRect[]>(p, "rects").Select(r => new Rectangle(r.X, r.Y, r.W, r.H)).ToArray()); return null;
             case "dock": Session(p).Dock(); return null;
             case "snapshot": return Session(p).Snapshot();
+            case "thumb": return Session(p).Thumb();
             case "connectedCount": return _sessions.Values.Count(s => s.View.IsConnected);
             default: throw new InvalidOperationException("unknown method " + method);
         }
@@ -341,7 +343,7 @@ internal sealed class EngineHost : ApplicationContext
         {
             existing.Name = m.Name; existing.Ip = m.Ip; existing.Target = m.Target; existing.Group = m.Group;
             existing.Mode = m.Mode; existing.CredentialId = m.CredentialId; existing.AutoType = m.AutoType;
-            existing.Favorite = m.Favorite; existing.Notes = m.Notes ?? "";
+            existing.Favorite = m.Favorite; existing.Notes = m.Notes ?? ""; existing.KeepAlive = m.KeepAlive;
             foreach (var s in _sessions.Values.Where(s => s.View.Machine == existing)) { s.View.Title = existing.Name; s.Report(); }
         }
         st.Save();
@@ -491,25 +493,56 @@ internal sealed class EngineHost : ApplicationContext
     {
         if (s == null || Locked) return;
         if (!s.View.IsConnected) { Emit("notify", new { text = "Connect first, then pick a login to fill." }); return; }
-        var st = S;
-        var entries = new List<FillEntry>();
-        var b = st.Data.Bastion;
-        if (!string.IsNullOrWhiteSpace(b.PrimaryUser) && !string.IsNullOrEmpty(b.PrimaryPassword))
-            entries.Add(new FillEntry(b.PrimaryUser, "bastion / step 1", b.PrimaryUser, b.PrimaryPassword, IsBastion: true));
-        foreach (var c in st.Data.Credentials)
-            entries.Add(new FillEntry(string.IsNullOrWhiteSpace(c.Name) ? c.Username : c.Name, c.Username, c.Username, c.Password));
+        var entries = FillEntries();
         if (entries.Count == 0)
         {
             Emit("notify", new { text = "No logins saved yet — add them under Remote Desktop → Logins." });
             return;
         }
 
+        // In its tab: Remterm shows the list itself (no window of ours over its window: focus stays simple
+        // and clicking anywhere outside closes it). Only names go out; the engine types the picked one.
+        if (s.Mode == "docked")
+        {
+            Emit("fillPicker", new { id = s.Id, entries = entries.Select(e => new { key = e.Key, label = e.Label, sub = e.Sub, bastion = e.IsBastion }) });
+            return;
+        }
+
+        if (_picker != null) { _picker.Activate(); return; }
         var root = Win.Root(s.View);
-        using var picker = new CredentialPicker(entries);
+        var picker = new CredentialPicker(entries);
         var area = Win.ClientScreenRect(root);
         picker.Location = new Point(area.X + (area.Width - picker.Width) / 2, area.Y + Theme.S(70));
-        if (picker.ShowDialog(new Win.Owner(root)) == DialogResult.OK && picker.Result is { } f)
-            s.View.FillSmart(f.Login, f.Password);
+        picker.FormClosed += (_, _) =>
+        {
+            _picker = null;
+            if (picker.DialogResult == DialogResult.OK && picker.Result is { } f) s.View.FillSmart(f.Login, f.Password);
+        };
+        _picker = picker;
+        // Not modal: a modal dialog disables Remterm's window, and WebView2 fails (Wails exits) when that
+        // disabled window gets the focus back. Owned and modeless, it closes as soon as anything else is clicked.
+        picker.Show(new Win.Owner(root));
+    }
+
+    private CredentialPicker? _picker;
+
+    private List<FillEntry> FillEntries()
+    {
+        var st = S;
+        var entries = new List<FillEntry>();
+        var b = st.Data.Bastion;
+        if (!string.IsNullOrWhiteSpace(b.PrimaryUser) && !string.IsNullOrEmpty(b.PrimaryPassword))
+            entries.Add(new FillEntry("bastion", b.PrimaryUser, "bastion / step 1", b.PrimaryUser, b.PrimaryPassword, IsBastion: true));
+        foreach (var c in st.Data.Credentials)
+            entries.Add(new FillEntry(c.Id, string.IsNullOrWhiteSpace(c.Name) ? c.Username : c.Name, c.Username, c.Username, c.Password));
+        return entries;
+    }
+
+    /// <summary>A login picked in Remterm's list: typed once the session is back on screen.</summary>
+    private void FillWith(RdpSession s, string key)
+    {
+        var f = FillEntries().FirstOrDefault(e => e.Key == key) ?? throw new InvalidOperationException("That login was deleted.");
+        s.View.FillSmartWhenShown(f.Login, f.Password);
     }
 
     // ============================================================================================ hotkeys

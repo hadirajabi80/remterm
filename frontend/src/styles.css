@@ -3253,3 +3253,73 @@ body.tab-dragging * {
 :root[data-theme='light'] .palette {
   box-shadow: 0 20px 50px rgba(28, 35, 48, 0.18);
 }
+/* ---- Fill login picker ---- */
+.fill-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fill-picker .hint {
+  margin: 0;
+}
+.fill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.fill-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.fill-item.sel {
+  background: var(--accent-soft);
+}
+.fill-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.fill-item.sel .fill-num {
+  background: var(--accent);
+  color: #fff;
+}
+.fill-ico {
+  flex: none;
+  display: grid;
+  color: var(--warn);
+}
+.fill-ico.bastion {
+  color: var(--accent);
+}
+.fill-label {
+  font-weight: 600;
+}
+.fill-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.st-version {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

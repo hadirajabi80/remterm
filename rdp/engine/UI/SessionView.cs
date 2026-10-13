@@ -673,6 +673,14 @@ internal sealed class SessionView : UserControl
         else FillLogin(login, password);
     }
 
+    /// <summary>The login list was shown by Remterm over the tab: wait until the session is back on screen and in front.</summary>
+    public async void FillSmartWhenShown(string login, string password)
+    {
+        for (int i = 0; i < 25 && !(IsOnScreen() && Win.IsForeground(this)); i++) await Task.Delay(100);
+        await Task.Delay(150); // the first frames after showing again
+        FillSmart(login, password);
+    }
+
     private async Task<bool> PasteField(string text)
     {
         if (!SetClipboard(text)) { Diag.Log($"[{Machine.Name}] clipboard set failed"); return false; }

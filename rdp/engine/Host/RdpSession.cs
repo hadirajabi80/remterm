@@ -94,6 +94,8 @@ internal sealed class RdpSession
         }
         else if (_host.Visible)
         {
+            var thumb = CaptureThumb(); // the tab's hover preview shows the screen as it was left
+            if (thumb.Length > 0) _lastThumb = thumb;
             bool hadFocus = Win.Contains(_host, Win.FocusedWindow());
             _host.Visible = false;
             _clip = [];
@@ -315,6 +317,47 @@ internal sealed class RdpSession
         finally
         {
             bmp?.Dispose();
+        }
+    }
+
+    private string _lastThumb = "";
+
+    /// <summary>A small picture for the tab's hover preview: live when the session is on screen, else as it was left.</summary>
+    public string Thumb()
+    {
+        if (_window != null || _host.Visible)
+        {
+            var live = CaptureThumb();
+            if (live.Length > 0) _lastThumb = live;
+        }
+        return _lastThumb;
+    }
+
+    private string CaptureThumb()
+    {
+        if (!View.IsConnected || View.Rdp is not { Width: > 10, Height: > 10 } rdp) return "";
+        try
+        {
+            using var bmp = PromptDetector.CaptureSession(rdp);
+            if (bmp == null) return "";
+            int w = Math.Min(Theme.S(420), bmp.Width), h = Math.Max(1, bmp.Height * w / bmp.Width);
+            using var small = new Bitmap(w, h);
+            using (var g = Graphics.FromImage(small))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                g.DrawImage(bmp, 0, 0, w, h);
+            }
+            using var ms = new MemoryStream();
+            var jpeg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+            using var p = new EncoderParameters(1);
+            p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 78L);
+            small.Save(ms, jpeg, p);
+            return "data:image/jpeg;base64," + Convert.ToBase64String(ms.ToArray());
+        }
+        catch (Exception ex)
+        {
+            Diag.Log("thumb: " + ex.Message);
+            return "";
         }
     }
 

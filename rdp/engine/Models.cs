@@ -67,6 +67,9 @@ public sealed class Machine
     public DateTime? LastUsed { get; set; }
     public string Notes { get; set; } = "";
 
+    /// <summary>Keep the session alive: reconnect when it drops and stop the server signing it out for idleness.</summary>
+    public bool KeepAlive { get; set; }
+
     /// <summary>A one-off machine typed into Quick Connect; never saved to the vault.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsAdHoc { get; set; }

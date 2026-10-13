@@ -60,6 +60,10 @@ export const rdp = {
   focus: (id: string) => call<void>('focus', { id }),
   refresh: (id: string) => call<void>('refresh', { id }),
   fill: (id: string) => call<void>('fill', { id }),
+  /** Types a login picked in Remterm's list (key: 'bastion' or a login id). */
+  fillWith: (id: string, key: string) => call<void>('fillWith', { id, key }),
+  /** Small picture of the session for the tab's hover preview ('' when there is none yet). */
+  thumb: (id: string) => call<string>('thumb', { id }),
   fullscreen: (id: string) => call<void>('fullscreen', { id }),
   popout: (id: string, screen?: { x: number; y: number; follow?: boolean }) => call<void>('popout', { id, ...screen }),
   clip: (id: string, rects: { x: number; y: number; w: number; h: number }[]) => call<void>('clip', { id, rects }),

@@ -54,6 +54,7 @@ import {
 import { Welcome } from './components/Welcome';
 import { RdpView } from './components/RdpView';
 import { WebRdpView, webRdpSessions } from './components/WebRdpView';
+import { FillPicker, type FillChoice } from './components/FillPicker';
 import type { RdpCtx } from './components/RdpPanel';
 import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
 import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
@@ -163,6 +164,11 @@ export default function App() {
   const [rdpDialog, setRdpDialog] = useState<RdpDialogState | null>(null);
   const appLocked = !!rdpStatus?.locked && !rdpStatus.needsPassword;
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [fillPick, setFillPick] = useState<{ id: string; entries: FillChoice[] } | null>(null);
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    api.appVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   const sessions = useRef(new Map<string, TermSession>());
   const panesRef = useRef(panes);
@@ -202,6 +208,7 @@ export default function App() {
     varsRequest ||
     historyList ||
     rdpDialog ||
+    fillPick ||
     appLocked
   );
 
@@ -947,6 +954,9 @@ export default function App() {
       case 'notify':
         notify(d.text);
         break;
+      case 'fillPicker':
+        setFillPick({ id: d.id, entries: d.entries ?? [] });
+        break;
       case 'changed':
       case 'locked':
         void refreshRdp();
@@ -1595,6 +1605,7 @@ export default function App() {
           broadcast={!!activeTab?.broadcast}
           hostCount={hosts.length}
           fontSize={appearance.fontSize}
+          version={appVersion}
         />
       </main>
 
@@ -1849,6 +1860,21 @@ export default function App() {
             void refreshRdp().then(() => connect && connectRdp({ kind: 'rdp', machineId: m.id }));
           }}
           onClose={() => setRdpDialog(null)}
+        />
+      )}
+      {fillPick && (
+        <FillPicker
+          entries={fillPick.entries}
+          onClose={() => {
+            const id = fillPick.id;
+            setFillPick(null);
+            window.setTimeout(() => void rdp.focus(id).catch(() => {}), 150); // the keyboard back to the session
+          }}
+          onPick={(key) => {
+            const id = fillPick.id;
+            setFillPick(null);
+            rdp.fillWith(id, key).catch((e) => notify(errorMessage(e), 'error'));
+          }}
         />
       )}
       {rdpDialog?.kind === 'logins' && rdpData && (
