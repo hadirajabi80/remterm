@@ -61,6 +61,31 @@ internal sealed class CredentialPicker : Form
         base.OnShown(e);
         Activate();
         _search.Focus();
+        // The session behind is disabled while this is open, so a click there never deactivates us:
+        // watch the mouse and close on any press outside.
+        bool wasDown = true;
+        _outside.Tick += (_, _) =>
+        {
+            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0;
+            if (down && !wasDown && !Bounds.Contains(Cursor.Position) && DialogResult == DialogResult.None)
+            {
+                DialogResult = DialogResult.Cancel;
+                Close();
+            }
+            wasDown = down;
+        };
+        _outside.Start();
+    }
+
+    private readonly System.Windows.Forms.Timer _outside = new() { Interval = 40 };
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _outside.Dispose();
+        base.OnFormClosed(e);
     }
 
     protected override void OnDeactivate(EventArgs e)
