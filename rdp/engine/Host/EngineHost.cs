@@ -153,6 +153,7 @@ internal sealed class EngineHost : ApplicationContext
             case "reconnect": Session(p).View.Connect(); return null;
             case "disconnect": Session(p).View.Disconnect(); return null;
             case "focus": Session(p).Focus(); return null;
+            case "refresh": Session(p).Refresh(); return null;
             case "fill": ShowFillPicker(Session(p)); return null;
             case "fullscreen": Session(p).ToggleFullscreen(); return null;
             case "popout":
@@ -508,7 +509,7 @@ internal sealed class EngineHost : ApplicationContext
         var area = Win.ClientScreenRect(root);
         picker.Location = new Point(area.X + (area.Width - picker.Width) / 2, area.Y + Theme.S(70));
         if (picker.ShowDialog(new Win.Owner(root)) == DialogResult.OK && picker.Result is { } f)
-            s.View.FillLogin(f.Login, f.Password);
+            s.View.FillSmart(f.Login, f.Password);
     }
 
     // ============================================================================================ hotkeys

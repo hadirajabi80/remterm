@@ -69,6 +69,8 @@ export function RdpView(props: {
     let last = '';
     const push = (force = false) => {
       const r = el.getBoundingClientRect();
+      // Minimized / in the background: the page reports a tiny area — don't shrink the session to it.
+      if (visible && (document.hidden || r.width < 120 || r.height < 90)) return; // hiding is always sent
       const s = window.devicePixelRatio || 1;
       const rect = { x: Math.round(r.left * s), y: Math.round(r.top * s), w: Math.round(r.width * s), h: Math.round(r.height * s) };
       const key = `${rect.x},${rect.y},${rect.w},${rect.h},${visible}`;
@@ -86,11 +88,26 @@ export function RdpView(props: {
     ro.observe(el);
     window.addEventListener('resize', later);
     const iv = window.setInterval(push, 400); // catches moves that change no size (sidebar, splits)
+    // Back from minimized or another app: put the session in place and redraw it (what switching tabs did).
+    let back = 0;
+    const comeBack = () => {
+      if (document.hidden) return;
+      window.clearTimeout(back);
+      back = window.setTimeout(() => {
+        push(true);
+        if (visible) void rdp.refresh(id).catch(() => {});
+      }, 250);
+    };
+    document.addEventListener('visibilitychange', comeBack);
+    window.addEventListener('focus', comeBack);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', later);
       window.clearInterval(iv);
+      window.clearTimeout(back);
+      document.removeEventListener('visibilitychange', comeBack);
+      window.removeEventListener('focus', comeBack);
     };
   }, [id, visible, ready]);
 

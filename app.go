@@ -75,6 +75,18 @@ func (a *App) shutdown(context.Context) {
 	}
 }
 
+// SetWindowTheme matches the window frame to the app theme (Windows; macOS keeps its own).
+func (a *App) SetWindowTheme(theme string) {
+	if a.ctx == nil {
+		return
+	}
+	if theme == "light" {
+		wruntime.WindowSetLightTheme(a.ctx)
+	} else {
+		wruntime.WindowSetDarkTheme(a.ctx)
+	}
+}
+
 // Platform is the OS Remterm runs on ("windows", "darwin", "linux").
 func (a *App) Platform() string { return runtime.GOOS }
 

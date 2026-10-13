@@ -58,6 +58,9 @@ internal sealed class RdpSession
     /// <summary>Called by Remterm whenever the tab's content area moves, resizes, shows or hides.</summary>
     public void SetBounds(Rectangle r, bool visible)
     {
+        // While Remterm is minimized the page reports a tiny area: keep the session's size.
+        if (Win.IsMinimized(_engine.Parent)) return;
+        if (visible && (r.Width < 120 || r.Height < 90)) return;
         _bounds = r;
         _wantVisible = visible;
         Apply();
@@ -97,6 +100,18 @@ internal sealed class RdpSession
             ApplyClip();
             if (hadFocus) SetFocus(_engine.Parent); // give the keyboard back to Remterm's web view
         }
+    }
+
+    /// <summary>Redraws the session (after Remterm comes back from minimized / another app).</summary>
+    public void Refresh()
+    {
+        if (_window != null || !_host.Visible) return;
+        _host.Visible = false;
+        _host.Visible = true;
+        Win.BringToTop(_host);
+        View.PerformLayout();
+        View.Invalidate(true);
+        View.Rdp?.Invalidate(true);
     }
 
     public void Focus()

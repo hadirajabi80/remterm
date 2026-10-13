@@ -338,6 +338,20 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [appearance, typing, settingsLoaded, notify, optionsFor, hosts, groups]);
 
+  // App theme: dark, light or following the system.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const apply = () => {
+      const ui = appearance.ui ?? 'dark';
+      const light = ui === 'light' || (ui === 'system' && mq.matches);
+      document.documentElement.dataset.theme = light ? 'light' : 'dark';
+      void api.setWindowTheme(light ? 'light' : 'dark').catch(() => {});
+    };
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, [appearance.ui]);
+
   useEffect(() => {
     Object.assign(typingPrefs, typing);
     void api.setLogging(typing.recordLogs).catch(() => {});
@@ -1508,7 +1522,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {sidebarOpen && <Sidebar ctx={ctx} rdp={rdpCtx} panel={panel} onPanel={setPanel} />}
+      {sidebarOpen && <Sidebar ctx={ctx} rdp={rdpCtx} panel={panel} onPanel={setPanel} onSettings={() => setAppearanceOpen(true)} />}
 
       <main className="main">
         <TabBar

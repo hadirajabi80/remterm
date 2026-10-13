@@ -90,7 +90,7 @@ public sealed class AppSettings
     public bool AutoTypeEnabled { get; set; } = true;
     /// <summary>When on, auto-fill fires on connect using screen detection. Off (default) = manual picker only.</summary>
     public bool AutoFillOnConnect { get; set; }
-    public int AutoTypeDelayMs { get; set; } = 1500;
+    public int AutoTypeDelayMs { get; set; } = 500;
     public string AutoTypeSequence { get; set; } = "{login}{TAB}{password}{ENTER}";
     public bool AutoTypeDetectScreen { get; set; } = true;
 

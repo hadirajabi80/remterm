@@ -65,7 +65,7 @@ const NAV: { id: Panel; icon: string; label: string }[] = [
   { id: 'knownhosts', icon: 'shield', label: 'Known hosts' },
 ];
 
-export function Sidebar(props: { ctx: SidebarCtx; rdp: RdpCtx; panel: Panel; onPanel(p: Panel): void }) {
+export function Sidebar(props: { ctx: SidebarCtx; rdp: RdpCtx; panel: Panel; onPanel(p: Panel): void; onSettings(): void }) {
   const { ctx, panel } = props;
   const running = Object.values(ctx.tunnelStatus).filter((s) => s.state === 'running').length;
   const rdpOpen = Object.values(props.rdp.openStatus).filter((s) => s === 'connected').length;
@@ -82,6 +82,10 @@ export function Sidebar(props: { ctx: SidebarCtx; rdp: RdpCtx; panel: Panel; onP
             {n.id === 'rdp' && rdpOpen > 0 && <span className="rail-badge">{rdpOpen}</span>}
           </button>
         ))}
+        <div className="rail-spacer" />
+        <button className="rail-btn" title="Settings (Ctrl+,)" onClick={props.onSettings}>
+          <Icon name="gear" size={18} />
+        </button>
       </nav>
       <div className="side-panel">
         <div className="side-title">{NAV.find((n) => n.id === panel)?.label}</div>
@@ -306,7 +310,8 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
 
 function SnippetsPanel({ ctx }: { ctx: SidebarCtx }) {
   const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Groups start closed; click one to open it (searching shows every match).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = ctx.snippets.find((s) => s.id === selectedId);
   const groups = groupBy(
@@ -324,13 +329,13 @@ function SnippetsPanel({ ctx }: { ctx: SidebarCtx }) {
         {!ctx.hasSession && ctx.snippets.length > 0 && <div className="side-note">Open a terminal to run snippets, or use "Run on hosts".</div>}
         {groups.map(([group, list]) => {
           const key = group || 'General';
-          const open = !collapsed.has(key) || !!query;
+          const open = expanded.has(key) || !!query;
           return (
             <section key={key}>
               <div
                 className={`group-head ${open ? 'open' : ''}`}
                 onClick={() =>
-                  setCollapsed((s) => {
+                  setExpanded((s) => {
                     const n = new Set(s);
                     if (n.has(key)) n.delete(key);
                     else n.add(key);

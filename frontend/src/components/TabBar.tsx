@@ -182,8 +182,8 @@ export function TabBar(props: {
           )}
         </div>
       )}
-      <button className="icon-btn" title="Appearance (Ctrl+,)" onClick={props.onAppearance}>
-        <Icon name="brush" />
+      <button className="icon-btn" title="Settings (Ctrl+,)" onClick={props.onAppearance}>
+        <Icon name="gear" />
       </button>
     </div>
   );

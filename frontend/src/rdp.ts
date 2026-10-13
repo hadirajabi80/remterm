@@ -58,6 +58,7 @@ export const rdp = {
   reconnect: (id: string) => call<void>('reconnect', { id }),
   disconnect: (id: string) => call<void>('disconnect', { id }),
   focus: (id: string) => call<void>('focus', { id }),
+  refresh: (id: string) => call<void>('refresh', { id }),
   fill: (id: string) => call<void>('fill', { id }),
   fullscreen: (id: string) => call<void>('fullscreen', { id }),
   popout: (id: string, screen?: { x: number; y: number; follow?: boolean }) => call<void>('popout', { id, ...screen }),

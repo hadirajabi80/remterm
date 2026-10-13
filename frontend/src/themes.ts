@@ -74,6 +74,9 @@ export const SCHEMES: Scheme[] = [
   s('campbell', 'Campbell (Windows)', '#0c0c0c', '#cccccc', '#ffffff', '#3a3a3a',
     ['#0c0c0c', '#c50f1f', '#13a10e', '#c19c00', '#0037da', '#881798', '#3a96dd', '#cccccc'],
     ['#767676', '#e74856', '#16c60c', '#f9f1a5', '#3b78ff', '#b4009e', '#61d6d6', '#f2f2f2']),
+  s('githublight', 'GitHub Light', '#ffffff', '#24292f', '#0969da', '#b6d7ff',
+    ['#24292f', '#cf222e', '#116329', '#4d2d00', '#0969da', '#8250df', '#1b7c83', '#6e7781'],
+    ['#57606a', '#a40e26', '#1a7f37', '#633c01', '#218bff', '#a475f9', '#3192aa', '#8c959f']),
 ];
 
 export function getScheme(id: string): Scheme {
@@ -283,6 +286,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
   dim: 45,
   blur: 0,
   fontSize: 14,
+  ui: 'dark',
 };
 
 /** Downscales a picked image so it fits comfortably in the settings file. */

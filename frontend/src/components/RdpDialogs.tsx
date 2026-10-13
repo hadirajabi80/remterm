@@ -11,7 +11,7 @@ export const EMPTY_MACHINE: Machine = {
   ip: '',
   target: '',
   group: '',
-  mode: 'bastion',
+  mode: 'direct',
   credentialId: null,
   autoType: 'auto',
   favorite: false,
@@ -695,7 +695,7 @@ export function ImportDialog(props: { data: RdpData; onImported(n: number): void
         </div>
         <div className="form-grid">
           <label className="field">
-            Group <span className="hint">— empty: grouped by name (NF…, IRPT…)</span>
+            Group
             <input className="input" value={group} onChange={(e) => setGroup(e.target.value)} />
           </label>
           <label className="field">

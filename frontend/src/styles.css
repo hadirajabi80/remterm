@@ -452,10 +452,14 @@ button:disabled {
   text-overflow: ellipsis;
 }
 .tab-close {
+  flex: none;
   display: grid;
   place-items: center;
+  align-self: center;
   width: 20px;
   height: 20px;
+  padding: 0;
+  line-height: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -2976,4 +2980,276 @@ body.tab-dragging * {
   height: 100%;
   border: 0;
   background: var(--term-bg);
+}
+
+.tab-close svg {
+  display: block;
+}
+
+/* ---------- settings window ---------- */
+.rail-spacer {
+  flex: 1;
+}
+.settings-overlay {
+  background: rgba(4, 6, 10, 0.45);
+  backdrop-filter: none;
+}
+.settings {
+  display: flex;
+  width: 860px;
+  height: 600px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.5);
+  animation: pop 0.14s ease-out;
+}
+.settings-nav {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 230px;
+  padding: 18px 10px 12px;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+}
+.settings-brand {
+  margin: 0 8px 12px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  background: var(--panel);
+}
+.settings-tab.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.settings-tab-ico {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+.settings-tab.on .settings-tab-ico {
+  background: var(--accent);
+  color: #0a0d12;
+}
+.settings-tab-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.settings-tab-text b {
+  font-weight: 600;
+}
+.settings-tab-text span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.settings-version {
+  margin: auto 10px 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.settings-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 6px 24px;
+}
+.settings-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+.settings-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 24px 24px;
+  overflow-y: auto;
+  user-select: text;
+}
+.set-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+.set-card h3 {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.set-card .slider {
+  margin-top: 0;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.set-row > span {
+  display: flex;
+  flex-direction: column;
+}
+.set-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.theme-card.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--text);
+}
+.theme-preview {
+  display: grid;
+  grid-template-columns: 26% 1fr;
+  grid-template-rows: 22% 1fr;
+  gap: 4px;
+  height: 64px;
+  padding: 5px;
+  border-radius: 7px;
+}
+.theme-preview i {
+  border-radius: 4px;
+}
+.theme-preview i:nth-child(1) {
+  grid-row: span 2;
+}
+.theme-preview.dark {
+  background: #0a0d12;
+}
+.theme-preview.dark i {
+  background: #19202b;
+}
+.theme-preview.light {
+  background: #eef1f6;
+}
+.theme-preview.light i {
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #d6dbe4;
+}
+.theme-preview.system {
+  background: linear-gradient(135deg, #0a0d12 50%, #eef1f6 50%);
+}
+.theme-preview.system i {
+  background: rgba(127, 137, 153, 0.35);
+}
+
+/* ---------- light theme ---------- */
+:root[data-theme='light'] {
+  --bg: #eef1f6;
+  --bg-2: #f6f8fb;
+  --panel: #ffffff;
+  --panel-2: #eef1f6;
+  --border: #dfe3ea;
+  --border-2: #cbd2dd;
+  --text: #1c2330;
+  --text-2: #475266;
+  --muted: #7a8599;
+  --accent: #3d6fe0;
+  --accent-2: #2f5bc4;
+  --accent-soft: rgba(61, 111, 224, 0.12);
+  --ok: #2f9e44;
+  --warn: #c27c0e;
+  --danger: #d6336c;
+  color-scheme: light;
+}
+:root[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background: #c5ccd8;
+  background-clip: padding-box;
+}
+:root[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background-color: #aab3c2;
+}
+:root[data-theme='light'] .btn:hover {
+  border-color: #b9c2d0;
+  background: #e7ebf2;
+}
+:root[data-theme='light'] .btn.primary,
+:root[data-theme='light'] .btn.danger-solid,
+:root[data-theme='light'] .settings-tab.on .settings-tab-ico,
+:root[data-theme='light'] .setup-num {
+  color: #ffffff;
+}
+:root[data-theme='light'] .btn.primary:hover {
+  background: #2f5bc4;
+}
+:root[data-theme='light'] .overlay {
+  background: rgba(28, 35, 48, 0.28);
+}
+:root[data-theme='light'] .drawer {
+  background: rgba(255, 255, 255, 0.98);
+}
+:root[data-theme='light'] .toast.error {
+  color: #b02a37;
+}
+:root[data-theme='light'] .lock-screen {
+  background: radial-gradient(circle at 50% 35%, #ffffff, var(--bg) 70%);
+}
+:root[data-theme='light'] .tab.active {
+  background: var(--term-bg);
+}
+:root[data-theme='light'] .modal,
+:root[data-theme='light'] .settings,
+:root[data-theme='light'] .menu,
+:root[data-theme='light'] .update-banner,
+:root[data-theme='light'] .palette {
+  box-shadow: 0 20px 50px rgba(28, 35, 48, 0.18);
 }

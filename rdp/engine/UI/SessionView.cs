@@ -22,7 +22,7 @@ internal sealed class SessionView : UserControl
     private readonly Button _btnClose;
 
     private readonly System.Windows.Forms.Timer _resizeTimer = new() { Interval = 450 };
-    private readonly System.Windows.Forms.Timer _autoTypeTimer = new() { Interval = 400 };
+    private readonly System.Windows.Forms.Timer _autoTypeTimer = new() { Interval = 250 };
     private DateTime _autoTypeStart;
     private int _visibleWaitMs;
     private bool _loggedIn;
@@ -381,7 +381,8 @@ internal sealed class SessionView : UserControl
 
     // ---------------------------------------------------------------- auto-type
 
-    private bool _typedBastion, _typedTarget, _reading;
+    private bool _typedBastion, _typedTarget, _typedWindows, _reading;
+    private int _otherTicks;
 
     /// <summary>
     /// Auto-fill runs only when the machine has its own assigned credential (right-click → Credentials),
@@ -397,7 +398,8 @@ internal sealed class SessionView : UserControl
     {
         StopAutoType();
         if (!TargetTypingAllowed() && !BastionTypingAllowed()) return;
-        _typedBastion = _typedTarget = false;
+        _typedBastion = _typedTarget = _typedWindows = false;
+        _otherTicks = 0;
         _autoTypeStart = DateTime.UtcNow;
         _visibleWaitMs = 0;
         _autoTypeTimer.Start();
@@ -411,7 +413,8 @@ internal sealed class SessionView : UserControl
         var s = _store.Data.Settings;
         if (!IsConnected || _rdp == null) { StopAutoType(); return; }
         var elapsed = DateTime.UtcNow - _autoTypeStart;
-        if (elapsed.TotalMilliseconds < s.AutoTypeDelayMs) return;
+        int delay = s.AutoTypeDelayMs == 1500 ? 500 : s.AutoTypeDelayMs; // 1500 was the old default
+        if (elapsed.TotalMilliseconds < delay) return;
         if (elapsed.TotalMinutes > 15) { StopAutoType(); return; }
 
         // Only fill into a session the user can actually see and that is the active window.
@@ -422,7 +425,24 @@ internal sealed class SessionView : UserControl
         if (bmp == null) return;
 
         var color = PromptDetector.Analyze(bmp);
-        if (color != PromptDetector.Result.Prompt) { CheckTimeout(); return; }
+        if (color != PromptDetector.Result.Prompt)
+        {
+            // Not a WALLIX page. Now and then read it, to catch Windows' own password screen.
+            if (_typedWindows || !ScreenReader.Available || !TargetTypingAllowed() || ++_otherTicks % 4 != 0) { CheckTimeout(); return; }
+            var other = ScreenReader.Screen.Unknown;
+            _reading = true;
+            try { (other, _) = await ScreenReader.ClassifyAsync(bmp); }
+            catch (Exception ex) { Diag.Log($"[{Machine.Name}] OCR error: {ex.Message}"); }
+            finally { _reading = false; }
+            if (other == ScreenReader.Screen.WindowsPassword && IsConnected && !_typing && _store.ResolveCredential(Machine) is { } wc)
+            {
+                _typedWindows = true;
+                Diag.Log($"[{Machine.Name}] auto: Windows password screen");
+                FillPassword(wc.Password);
+            }
+            else CheckTimeout();
+            return;
+        }
 
         // A dark-blue login page is showing. Use OCR (when available) to fill the right credential.
         ScreenReader.Screen screen = ScreenReader.Screen.Unknown;
@@ -448,6 +468,14 @@ internal sealed class SessionView : UserControl
                 }
                 return;
 
+            case ScreenReader.Screen.WindowsPassword:
+                if (!_typedWindows && TargetTypingAllowed() && _store.ResolveCredential(Machine) is { } pc)
+                {
+                    _typedWindows = true;
+                    FillPassword(pc.Password);
+                }
+                return;
+
             case ScreenReader.Screen.TargetPrompt:
                 if (!_typedTarget && TargetTypingAllowed())
                 {
@@ -459,7 +487,7 @@ internal sealed class SessionView : UserControl
             default:
                 // Login-coloured screen, but OCR unavailable or unsure. After a short wait, fill the
                 // assigned credential (the common single-login case).
-                if (!_typedTarget && TargetTypingAllowed() && (!ScreenReader.Available || _visibleWaitMs > 2500))
+                if (!_typedTarget && TargetTypingAllowed() && (!ScreenReader.Available || _visibleWaitMs > 1500))
                 {
                     var c = _store.ResolveCredential(Machine);
                     if (c != null) { _typedTarget = true; StopAutoType(); FillLogin(c.Username, c.Password); }
@@ -534,20 +562,38 @@ internal sealed class SessionView : UserControl
                 Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again.");
                 return;
             }
-            await Task.Delay(350);
+            await Task.Delay(150);
 
             // Wake the input channel; the RDP session drops the first keystrokes after focus lands.
             SendKeysRobust(KeyTyper.KeyPress(0x2A)); // Shift tap (harmless)
-            await Task.Delay(200);
+            await Task.Delay(90);
 
-            ok &= await PasteField(login);              // login field
-            await Task.Delay(180);
-            SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
-            await Task.Delay(250);
-            ok &= await PasteField(password);           // password field
-            await Task.Delay(180);
-            SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
-            await Task.Delay(700);
+            if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(login + password, out _))
+            {
+                // Fast path: the session uses the US layout, so type the keys directly (no clipboard round-trip).
+                var keys = new List<(int sc, bool up)>();
+                KeyTyper.AppendSelectAll(keys);
+                KeyTyper.AppendText(keys, login);
+                KeyTyper.AppendKey(keys, KeyTyper.Tab);
+                ok &= SendKeysRobust(keys);
+                await Task.Delay(120);
+                keys.Clear();
+                KeyTyper.AppendSelectAll(keys);
+                KeyTyper.AppendText(keys, password);
+                KeyTyper.AppendKey(keys, KeyTyper.Enter);
+                ok &= SendKeysRobust(keys);
+            }
+            else
+            {
+                ok &= await PasteField(login);              // login field
+                await Task.Delay(100);
+                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
+                await Task.Delay(150);
+                ok &= await PasteField(password);           // password field
+                await Task.Delay(100);
+                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+            }
+            await Task.Delay(300);
 
             Diag.Log($"[{Machine.Name}] FILL done ok={ok}  after={Diag.SaveCapture(PromptDetector.CaptureSession(_rdp), "afterfill")}");
         }
@@ -564,14 +610,77 @@ internal sealed class SessionView : UserControl
         if (!ok) Notify?.Invoke(this, "Fill may be incomplete — press Ctrl+Alt+K and pick again, or check that clipboard redirection is on in ⚙ Settings.");
     }
 
+    /// <summary>Windows' sign-in / lock screen: only the password box (the user is already chosen).</summary>
+    public async void FillPassword(string password)
+    {
+        if (_typing || _rdp == null || !IsConnected) return;
+        if (!IsOnScreen() || !Win.IsForeground(this))
+        {
+            Notify?.Invoke(this, "Bring the session tab to the front, then press Ctrl+Alt+K.");
+            return;
+        }
+        _typing = true;
+        bool ok = true;
+        try
+        {
+            if (!FocusSession()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
+            await Task.Delay(150);
+            SendKeysRobust(KeyTyper.KeyPress(0x2A)); // wake the input channel
+            await Task.Delay(90);
+            if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(password, out _))
+            {
+                var keys = new List<(int sc, bool up)>();
+                KeyTyper.AppendSelectAll(keys);
+                KeyTyper.AppendText(keys, password);
+                KeyTyper.AppendKey(keys, KeyTyper.Enter);
+                ok &= SendKeysRobust(keys);
+            }
+            else
+            {
+                ok &= await PasteField(password);
+                await Task.Delay(100);
+                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+            }
+            await Task.Delay(300);
+        }
+        catch (Exception ex)
+        {
+            ok = false;
+            Diag.Log($"[{Machine.Name}] FILL password error: {ex.Message}");
+        }
+        finally
+        {
+            ClearClipboard();
+            _typing = false;
+        }
+        if (!ok) Notify?.Invoke(this, "The password may not have been typed — press Ctrl+Alt+K and pick again.");
+    }
+
+    /// <summary>Ctrl+Alt+K: look at the screen first — a password-only screen gets just the password.</summary>
+    public async void FillSmart(string login, string password)
+    {
+        if (_rdp == null || !IsConnected) return;
+        var screen = ScreenReader.Screen.Unknown;
+        if (ScreenReader.Available)
+        {
+            using var bmp = PromptDetector.CaptureSession(_rdp);
+            if (bmp != null)
+            {
+                try { (screen, _) = await ScreenReader.ClassifyAsync(bmp); } catch { /* fill both fields */ }
+            }
+        }
+        if (screen == ScreenReader.Screen.WindowsPassword) FillPassword(password);
+        else FillLogin(login, password);
+    }
+
     private async Task<bool> PasteField(string text)
     {
         if (!SetClipboard(text)) { Diag.Log($"[{Machine.Name}] clipboard set failed"); return false; }
-        await Task.Delay(450); // let the clipboard sync to the remote session
+        await Task.Delay(300); // let the clipboard sync to the remote session
         bool a = SendKeysRobust(KeyTyper.SelectAll());
-        await Task.Delay(120);
+        await Task.Delay(70);
         bool v = SendKeysRobust(KeyTyper.Paste());
-        await Task.Delay(120);
+        await Task.Delay(90);
         return a && v;
     }
 

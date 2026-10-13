@@ -76,6 +76,7 @@ export const api = {
   openLocal: (req: { sessionId: string; shellId: string; cwd?: string; cols: number; rows: number }) => call<void>('OpenLocal', req),
   takeLaunchFolder: () => call<string>('TakeLaunchFolder'),
   platform: () => call<string>('Platform'),
+  setWindowTheme: (theme: 'dark' | 'light') => call<void>('SetWindowTheme', theme),
   appVersion: () => call<string>('AppVersion'),
   checkUpdate: () => call<UpdateInfo>('CheckUpdate'),
   installUpdate: () => call<void>('InstallUpdate'),

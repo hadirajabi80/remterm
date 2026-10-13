@@ -14,7 +14,7 @@ namespace RemoteHub.Rdp;
 /// </summary>
 internal static class ScreenReader
 {
-    public enum Screen { Unknown, BastionLogin, TargetPrompt, Selector }
+    public enum Screen { Unknown, BastionLogin, TargetPrompt, Selector, WindowsPassword }
 
     private static readonly Lazy<OcrEngine?> Engine = new(() =>
     {
@@ -49,6 +49,9 @@ internal static class ScreenReader
             return Screen.Selector;
         if (has(@"Log\s*in|User\s*name") && has("Pass\\s*word"))
             return Screen.BastionLogin;
+        // Windows' own sign-in / lock screen: the user is already chosen, only a password box.
+        if (has(@"\bPass\s*word\b") && !has(@"User\s*name|Username|\bDevice\b|Authori[sz]ation"))
+            return Screen.WindowsPassword;
         return Screen.Unknown;
     }
 

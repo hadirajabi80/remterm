@@ -140,6 +140,7 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
     },
     RestartExplorer: async () => {},
     Platform: async () => 'windows',
+    SetWindowTheme: async () => {},
     AppVersion: async () => 'dev',
     CheckUpdate: async () => ({ current: 'dev', latest: '1.3.0', available: false, notes: '', page: '', asset: '', url: '', size: 0 }),
     InstallUpdate: async () => {},

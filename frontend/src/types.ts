@@ -303,4 +303,5 @@ export interface Appearance {
   dim: number; // 0–95, % darkening over the background
   blur: number; // px
   fontSize: number;
+  ui?: 'dark' | 'light' | 'system'; // app theme
 }
