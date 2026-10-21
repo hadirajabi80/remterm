@@ -39,6 +39,7 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
       autoTypeDetectScreen: true,
       sessionUsesScreenSize: true,
       colorDepth: 32,
+      quality: 'best',
       smartSizing: true,
       dynamicResize: true,
       redirectClipboard: true,

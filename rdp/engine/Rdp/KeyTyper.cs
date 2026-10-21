@@ -23,6 +23,34 @@ internal static class KeyTyper
         keys.Add((Ctrl, true));
     }
 
+    /// <summary>Ctrl+A, then the text: replaces what the focused field holds.</summary>
+    public static List<(int sc, bool up)> SelectAllThen(string text)
+    {
+        var keys = new List<(int sc, bool up)>();
+        AppendSelectAll(keys);
+        AppendText(keys, text);
+        return keys;
+    }
+
+    /// <summary>Splits keys into groups of about <paramref name="size"/>, never while Shift or Ctrl is held down.</summary>
+    public static IEnumerable<List<(int sc, bool up)>> Chunks(List<(int sc, bool up)> keys, int size)
+    {
+        var chunk = new List<(int sc, bool up)>();
+        int held = 0;
+        foreach (var k in keys)
+        {
+            chunk.Add(k);
+            if (k.sc is Shift or Ctrl) held += k.up ? -1 : 1;
+            if (held <= 0 && chunk.Count >= size)
+            {
+                yield return chunk;
+                chunk = new List<(int sc, bool up)>();
+                held = 0;
+            }
+        }
+        if (chunk.Count > 0) yield return chunk;
+    }
+
     public static List<(int sc, bool up)> KeyPress(int scanCode) => new() { (scanCode, false), (scanCode, true) };
     public static List<(int sc, bool up)> SelectAll() => new() { (Ctrl, false), (A, false), (A, true), (Ctrl, true) };
     public static List<(int sc, bool up)> Paste() => new() { (Ctrl, false), (V, false), (V, true), (Ctrl, true) };

@@ -295,7 +295,7 @@ internal sealed class RdpSession
         Bitmap? bmp = null;
         try
         {
-            if (View.IsConnected && View.Rdp != null) bmp = PromptDetector.CaptureSession(View.Rdp);
+            if (View.IsConnected && View.Rdp != null) bmp = PromptDetector.CaptureSession(View.Rdp, preferScreen: false);
             if (bmp == null && View.Width > 0 && View.Height > 0)
             {
                 bmp = new Bitmap(View.Width, View.Height);

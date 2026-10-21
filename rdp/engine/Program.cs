@@ -15,6 +15,7 @@ internal static class Program
         if (args.Length >= 2 && args[0] == "--set-host") return SetHost(args[1]);
         if (args.Length >= 1 && args[0] == "--dump") return Dump();
         if (args.Length >= 2 && args[0] == "--makeicon") { Icons.WriteIco(args[1]); return 0; }
+        if (args.Length >= 2 && args[0] == "--read-screen") return ReadScreen(args[1]);
 
         string? pipe = Arg(args, "--pipe"), token = Arg(args, "--token"), parent = Arg(args, "--parent");
         ApplicationConfiguration.Initialize();
@@ -57,6 +58,21 @@ internal static class Program
             d.Machines.AddRange(r.Machines);
             v.Save(d);
             Console.WriteLine($"imported {r.Machines.Count} machine(s); total now {d.Machines.Count}");
+            return 0;
+        }
+        catch (Exception ex) { Console.WriteLine("ERROR: " + ex.Message); return 1; }
+    }
+
+    /// <summary>How auto-fill reads a saved session picture (a screenshot or a Diag capture).</summary>
+    private static int ReadScreen(string path)
+    {
+        try
+        {
+            using var bmp = new Bitmap(path);
+            var r = Rdp.ScreenReader.ReadScreenAsync(bmp).GetAwaiter().GetResult();
+            foreach (var b in Rdp.PromptDetector.FindInputBoxes(bmp)) Console.WriteLine($"box {b}");
+            Console.WriteLine($"screen={r.Screen} wallixColours={r.Wallix} centredBoxes={r.Boxes} ocr={Rdp.ScreenReader.Available}");
+            Console.WriteLine("text: " + r.Text.Replace('\n', ' '));
             return 0;
         }
         catch (Exception ex) { Console.WriteLine("ERROR: " + ex.Message); return 1; }

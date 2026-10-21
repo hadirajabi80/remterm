@@ -70,6 +70,9 @@ public sealed class Machine
     /// <summary>Keep the session alive: reconnect when it drops and stop the server signing it out for idleness.</summary>
     public bool KeepAlive { get; set; }
 
+    /// <summary>Picture quality for this machine (see <see cref="RdpQuality"/>); empty = the global setting.</summary>
+    public string Quality { get; set; } = "";
+
     /// <summary>A one-off machine typed into Quick Connect; never saved to the vault.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsAdHoc { get; set; }
@@ -86,6 +89,28 @@ public sealed class Machine
         string.IsNullOrWhiteSpace(ip) ? $"Interactive@{name}:RDP" : $"Interactive@{name}-{ip}:RDP";
 }
 
+/// <summary>
+/// How much picture the server sends. Lower levels trade looks for speed on slow links:
+/// <list type="bullet">
+/// <item>best — the Colors setting and every desktop effect, as before.</item>
+/// <item>balanced — no wallpaper, animations, window contents while dragging, or cursor shadow.</item>
+/// <item>fast — also 16-bit colours, no visual styles, and the low-bandwidth mode of RDP.</item>
+/// <item>fastest — also a 25% smaller remote screen, scaled up to fit (fewer pixels to send, softer text).</item>
+/// </list>
+/// </summary>
+public static class RdpQuality
+{
+    public const string Best = "best", Balanced = "balanced", Fast = "fast", Fastest = "fastest";
+
+    public static string Normalize(string? q, string fallback = Best)
+    {
+        var v = (q ?? "").Trim().ToLowerInvariant();
+        return v is Best or Balanced or Fast or Fastest ? v : fallback;
+    }
+
+    public static int Level(string q) => q switch { Balanced => 1, Fast => 2, Fastest => 3, _ => 0 };
+}
+
 public sealed class AppSettings
 {
     public string? DefaultCredentialId { get; set; }
@@ -100,6 +125,8 @@ public sealed class AppSettings
     /// <summary>true = sessions always use the monitor resolution (exact in fullscreen, scaled in a window).</summary>
     public bool SessionUsesScreenSize { get; set; } = true;
     public int ColorDepth { get; set; } = 32;
+    /// <summary>Picture quality: best, balanced, fast or fastest (see <see cref="RdpQuality"/>).</summary>
+    public string Quality { get; set; } = RdpQuality.Best;
     public bool SmartSizing { get; set; } = true;
     public bool DynamicResize { get; set; } = true;
     public bool RedirectClipboard { get; set; } = true;

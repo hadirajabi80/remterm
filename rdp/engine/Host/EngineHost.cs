@@ -330,6 +330,7 @@ internal sealed class EngineHost : ApplicationContext
         if (m.Name.Length == 0) throw new InvalidOperationException("Please enter a name.");
         if (m.Mode == ConnectionMode.Direct && m.Ip.Length == 0) throw new InvalidOperationException("Direct RDP needs an IP or host name.");
         if (m.CredentialId == "") m.CredentialId = null;
+        m.Quality = RdpQuality.Normalize(m.Quality, "");
 
         var existing = st.Data.Machines.FirstOrDefault(x => x.Id == m.Id);
         if (existing == null)
@@ -344,6 +345,7 @@ internal sealed class EngineHost : ApplicationContext
             existing.Name = m.Name; existing.Ip = m.Ip; existing.Target = m.Target; existing.Group = m.Group;
             existing.Mode = m.Mode; existing.CredentialId = m.CredentialId; existing.AutoType = m.AutoType;
             existing.Favorite = m.Favorite; existing.Notes = m.Notes ?? ""; existing.KeepAlive = m.KeepAlive;
+            existing.Quality = m.Quality;
             foreach (var s in _sessions.Values.Where(s => s.View.Machine == existing)) { s.View.Title = existing.Name; s.Report(); }
         }
         st.Save();
@@ -420,6 +422,7 @@ internal sealed class EngineHost : ApplicationContext
         s.AutoTypeDelayMs = Math.Clamp(s.AutoTypeDelayMs, 0, 30000);
         s.AutoLockMinutes = Math.Clamp(s.AutoLockMinutes, 0, 600);
         s.ColorDepth = s.ColorDepth is 15 or 16 or 24 ? s.ColorDepth : 32;
+        s.Quality = RdpQuality.Normalize(s.Quality);
         st.Data.Settings = s;
         Diag.Enabled = s.DiagEnabled;
         st.Save();

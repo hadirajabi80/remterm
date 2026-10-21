@@ -195,6 +195,7 @@ export interface Machine {
   lastUsed: string | null; // ISO time
   notes: string;
   keepAlive?: boolean; // reconnect when dropped, no idle sign-out
+  quality?: RdpQuality | ''; // picture quality; '' = the global setting
 }
 
 export interface RdpCredential {
@@ -216,6 +217,9 @@ export interface Bastion {
   authLevel: number; // 0 pin key on first use, 1 require valid certificate, 2 warn
 }
 
+/** How much picture the server sends: lower levels are faster on slow links. */
+export type RdpQuality = 'best' | 'balanced' | 'fast' | 'fastest';
+
 export interface RdpSettings {
   defaultCredentialId?: string | null;
   autoTypeEnabled: boolean;
@@ -225,6 +229,7 @@ export interface RdpSettings {
   autoTypeDetectScreen: boolean;
   sessionUsesScreenSize: boolean;
   colorDepth: number;
+  quality?: RdpQuality;
   smartSizing: boolean;
   dynamicResize: boolean;
   redirectClipboard: boolean;

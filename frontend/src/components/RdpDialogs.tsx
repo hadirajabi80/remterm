@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { errorMessage } from '../api';
 import { bastionLogin, makeTarget, rdp, useCover } from '../rdp';
-import { NO_CREDENTIAL, type Bastion, type Machine, type RdpCredential, type RdpData, type RdpSettings } from '../types';
+import { NO_CREDENTIAL, type Bastion, type Machine, type RdpCredential, type RdpData, type RdpQuality, type RdpSettings } from '../types';
 import { Icon } from './Icon';
 import { Modal } from './Modal';
+
+/** Picture quality levels, best first (the engine's RdpQuality). */
+export const RDP_QUALITIES: { value: RdpQuality; label: string; hint: string }[] = [
+  { value: 'best', label: 'Best', hint: 'Full colours and every desktop effect' },
+  { value: 'balanced', label: 'Balanced', hint: 'No wallpaper, animations or window contents while dragging' },
+  { value: 'fast', label: 'Fast', hint: '16-bit colours, plain look, RDP low-bandwidth mode' },
+  { value: 'fastest', label: 'Fastest', hint: 'As Fast, with a 25% smaller remote screen scaled to fit (softer text)' },
+];
 
 export const EMPTY_MACHINE: Machine = {
   id: '',
@@ -180,6 +188,21 @@ export function MachineDialog(props: {
             <option value="never">Never</option>
           </select>
         </label>
+        {!props.data.external && (
+          <label className="field">
+            Picture quality <span className="hint">— lower is faster on slow links</span>
+            <select className="input" value={m.quality ?? ''} onChange={(e) => set('quality', e.target.value as Machine['quality'])}>
+              <option value="">
+                Default ({RDP_QUALITIES.find((q) => q.value === (props.data.settings.quality ?? 'best'))?.label ?? 'Best'})
+              </option>
+              {RDP_QUALITIES.map((q) => (
+                <option key={q.value} value={q.value} title={q.hint}>
+                  {q.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
           <input type="checkbox" checked={m.favorite} onChange={(e) => set('favorite', e.target.checked)} />
           ★ Favorite
@@ -527,6 +550,21 @@ export function RdpSettingsDialog(props: { data: RdpData; tab?: RdpSettingsTab; 
                 ))}
               </select>
             </label>
+            {!props.data.external && (
+              <label className="field">
+                Picture quality{' '}
+                <span className="hint">
+                  — {RDP_QUALITIES.find((q) => q.value === (s.quality ?? 'best'))?.hint}. Machines can override it; applies on the next connect.
+                </span>
+                <select className="input" value={s.quality ?? 'best'} onChange={(e) => sets('quality', e.target.value as RdpQuality)}>
+                  {RDP_QUALITIES.map((q) => (
+                    <option key={q.value} value={q.value}>
+                      {q.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {!props.data.external && check('dynamicResize', 'Change the remote resolution when the tab resizes')}
             {!props.data.external && check('smartSizing', 'Smart sizing', 'Scale the picture when the resolution cannot change.')}
             {check('redirectClipboard', 'Share the clipboard', 'Needed for pasting and for filling logins.')}

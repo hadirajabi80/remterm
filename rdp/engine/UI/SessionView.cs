@@ -96,35 +96,57 @@ internal sealed class SessionView : UserControl
     private bool _userDisconnect;
     private int _retries, _retryLeft;
     private string _retryDetail = "";
-    private const int NudgeAfterSeconds = 240;
+    private const int NudgeAfterSeconds = 60;
 
     /// <summary>
-    /// Servers (and WALLIX) sign idle sessions out. While nobody works in this session, a Shift tap
-    /// every few minutes counts as activity. Someone typing in it is activity already: no tap then.
+    /// Servers (and WALLIX) sign idle sessions out, and Windows locks them. While nobody works in this
+    /// session, a Shift tap every minute counts as activity. Someone typing in it is activity already.
     /// </summary>
     private void KeepAliveTick()
     {
         if (!Machine.KeepAlive || !IsConnected || _rdp == null || _typing) return;
-        if (Win.Contains(this, Win.FocusedWindow()) && Win.IdleMs() < 30_000)
+        long idle = Win.IdleMs();
+        if (Win.Contains(this, Win.FocusedWindow()) && idle < 30_000)
         {
             _lastActivity = DateTime.UtcNow;
             return;
         }
         if ((DateTime.UtcNow - _lastActivity).TotalSeconds < NudgeAfterSeconds) return;
+        if (idle < 2000) return; // keys being typed elsewhere right now: tap on the next tick
         _lastActivity = DateTime.UtcNow;
-        try
-        {
-            KeyTyper.SendCom(_rdp.NonScriptable, KeyTyper.KeyPress(0x2A)); // Shift: changes nothing on screen
-            Diag.Log($"[{Machine.Name}] keep-alive tap");
-        }
-        catch (Exception ex) { Diag.Log($"[{Machine.Name}] keep-alive failed: {ex.Message}"); }
+        Diag.Log($"[{Machine.Name}] keep-alive tap ({Nudge()})");
     }
 
-    /// <summary>Dropped while "keep connected" is on: connect again after 5, 10, 20, 40, then every 60 seconds.</summary>
-    private bool ScheduleRetry(int reason, string detail)
+    /// <summary>
+    /// A Shift tap (changes nothing on screen). The RDP control's own SendKeys only gets through while
+    /// the session has the keyboard focus — never the case while you work elsewhere, which is when the
+    /// tap is needed. Posted to the control's input window instead, it is sent focus or not.
+    /// </summary>
+    private string Nudge()
     {
-        // 1 = you disconnected, 2 = signed out / disconnected from inside the session: those are on purpose.
-        if (!Machine.KeepAlive || _userDisconnect || _closing || reason is 1 or 2 || _retries >= 15) return false;
+        var input = _rdp == null ? IntPtr.Zero : Win.FindDescendant(_rdp.Handle, "IHWindowClass");
+        if (input != IntPtr.Zero)
+        {
+            Win.PostKey(input, 0x10 /* VK_SHIFT */, 0x2A);
+            return "input window";
+        }
+        try
+        {
+            KeyTyper.SendCom(_rdp!.NonScriptable, KeyTyper.KeyPress(0x2A));
+            return "SendKeys";
+        }
+        catch (Exception ex) { return "failed: " + ex.Message; }
+    }
+
+    /// <summary>
+    /// Dropped while "keep connected" is on: connect again after 5, 10, 20, 40, then every 60 seconds.
+    /// Not when the drop was on purpose: you disconnected (reason 1), or inside the session someone signed
+    /// out or disconnected (extended reasons 2, 11, 12), or another connection took the session over (5).
+    /// An idle time-out (3) or a server or bastion closing the connection is reconnected.
+    /// </summary>
+    private bool ScheduleRetry(int reason, int ext, string detail)
+    {
+        if (!Machine.KeepAlive || _userDisconnect || _closing || reason == 1 || ext is 2 or 5 or 11 or 12 || _retries >= 60) return false;
         _retryLeft = Math.Min(60, 5 << Math.Min(_retries, 4));
         _retries++;
         _retryDetail = detail;
@@ -203,12 +225,14 @@ internal sealed class SessionView : UserControl
             _ = _rdp.Handle;
 
             dynamic ocx = _rdp.Ocx;
+            _quality = Quality;
             var size = DesktopSize();
+            int level = RdpQuality.Level(_quality);
             ocx.Server = server;
             ocx.UserName = user;
             ocx.DesktopWidth = size.Width;
             ocx.DesktopHeight = size.Height;
-            ocx.ColorDepth = s.ColorDepth;
+            ocx.ColorDepth = level >= 2 ? Math.Min(s.ColorDepth, 16) : s.ColorDepth;
             ocx.ConnectingText = "";
             ocx.DisconnectedText = "";
 
@@ -218,7 +242,7 @@ internal sealed class SessionView : UserControl
             adv.EnableCredSspSupport = b.UseNla;
             adv.AuthenticationLevel = (uint)Math.Clamp(b.AuthLevel, 0, 2);
             adv.NotifyTSPublicKey = true;
-            adv.SmartSizing = s.SmartSizing || s.SessionUsesScreenSize;
+            adv.SmartSizing = s.SmartSizing || s.SessionUsesScreenSize || level >= 3;
             adv.RedirectClipboard = s.RedirectClipboard;
             adv.RedirectDrives = s.RedirectDrives;
             adv.EnableAutoReconnect = true;
@@ -228,6 +252,15 @@ internal sealed class SessionView : UserControl
                 try { adv.keepAliveInterval = 60_000; } catch { /* older control */ }
             }
             adv.BitmapPersistence = 1;
+            if (level > 0)
+            {
+                // The connection type brings its own effect settings; ours go after it.
+                try { adv.NetworkConnectionType = level >= 2 ? 1u /* modem: RDP's low-bandwidth mode */ : 4u /* broadband */; }
+                catch { /* older control */ }
+                int perf = 0x1 | 0x2 | 0x4 | 0x20;  // no wallpaper, window contents while dragging, menu animations, cursor shadow
+                if (level >= 2) perf |= 0x8 | 0x40; // no visual styles, no cursor blinking
+                adv.PerformanceFlags = perf;
+            }
             adv.GrabFocusOnConnect = true;
             if (s.ForceUsKeyboard) adv.KeyBoardLayoutStr = "0x00000409";
 
@@ -239,7 +272,7 @@ internal sealed class SessionView : UserControl
             }
             catch (COMException) { /* not fatal */ }
 
-            Diag.Log($"[{Machine.Name}] CONNECT server={server}:{port} rdpUser=\"{user}\" nla={b.UseNla} mode={Machine.Mode} target=\"{Machine.Target}\" ocr={ScreenReader.Available} detect={s.AutoTypeDetectScreen}");
+            Diag.Log($"[{Machine.Name}] CONNECT server={server}:{port} rdpUser=\"{user}\" nla={b.UseNla} quality={_quality} size={size.Width}x{size.Height} mode={Machine.Mode} target=\"{Machine.Target}\" ocr={ScreenReader.Available} detect={s.AutoTypeDetectScreen}");
             ocx.Connect();
         }
         catch (Exception ex)
@@ -248,11 +281,16 @@ internal sealed class SessionView : UserControl
         }
     }
 
+    /// <summary>This machine's picture quality, else the global one.</summary>
+    private string Quality => RdpQuality.Normalize(Machine.Quality, "") is { Length: > 0 } q ? q : RdpQuality.Normalize(_store.Data.Settings.Quality);
+    private string _quality = RdpQuality.Best; // as connected: a change applies on the next connect
+
     private Size DesktopSize()
     {
         var sz = ClientSize;
         if (_store.Data.Settings.SessionUsesScreenSize || sz.Width < 400 || sz.Height < 300)
             sz = Screen.FromControl(this).Bounds.Size;
+        if (RdpQuality.Level(_quality) >= 3) sz = new Size(sz.Width * 3 / 4, sz.Height * 3 / 4); // scaled up to fit by smart sizing
         int w = Math.Clamp(sz.Width, 640, 8192) & ~1;
         int h = Math.Clamp(sz.Height, 480, 8192) & ~1;
         return new Size(w, h);
@@ -267,9 +305,12 @@ internal sealed class SessionView : UserControl
         return (value, defaultPort);
     }
 
+    private DateTime _connectedAt;
+
     private void OnConnected(object? sender, EventArgs e)
     {
         IsConnected = true;
+        _connectedAt = DateTime.UtcNow;
         HideOverlay();
         SetStatus(TabStatus.Connected);
         Diag.Log($"[{Machine.Name}] CONNECTED (auto-type watch starting)");
@@ -289,6 +330,8 @@ internal sealed class SessionView : UserControl
 
     private void OnDisconnected(object? sender, int reason)
     {
+        // Through a bastion "login complete" may never come: a connection that held a while counts as good too.
+        if (IsConnected && (DateTime.UtcNow - _connectedAt).TotalMinutes >= 2) _retries = 0;
         IsConnected = false;
         _loggedIn = false;
         StopAutoType();
@@ -311,15 +354,18 @@ internal sealed class SessionView : UserControl
         }
 
         string detail;
+        int ext = 0;
         try
         {
             dynamic ocx = _rdp!.Ocx;
-            detail = (string)ocx.GetErrorDescription((uint)reason, (uint)ocx.ExtendedDisconnectReason);
+            ext = (int)ocx.ExtendedDisconnectReason;
+            detail = (string)ocx.GetErrorDescription((uint)reason, (uint)ext);
         }
         catch
         {
             detail = "";
         }
+        Diag.Log($"[{Machine.Name}] DISCONNECTED reason={reason} ext={ext} keepConnected={Machine.KeepAlive} \"{detail}\"");
         if (reason is 1 or 2 or 3 || string.IsNullOrWhiteSpace(detail))
             detail = reason switch
             {
@@ -328,7 +374,7 @@ internal sealed class SessionView : UserControl
                 3 => "The server ended the session.",
                 _ => $"Disconnected (code {reason}).",
             };
-        if (ScheduleRetry(reason, detail)) return;
+        if (ScheduleRetry(reason, ext, detail)) return;
         ShowOverlay($"{Machine.Name} disconnected", detail, reconnect: true);
     }
 
@@ -469,6 +515,7 @@ internal sealed class SessionView : UserControl
         StopAutoType();
         if (!TargetTypingAllowed() && !BastionTypingAllowed()) return;
         _typedBastion = _typedTarget = _typedWindows = false;
+        _lastScreen = null;
         _otherTicks = 0;
         _autoTypeStart = DateTime.UtcNow;
         _visibleWaitMs = 0;
@@ -476,6 +523,16 @@ internal sealed class SessionView : UserControl
     }
 
     private void StopAutoType() => _autoTypeTimer.Stop();
+
+    private ScreenReader.Screen? _lastScreen;
+
+    /// <summary>True when the screen reads the same as on the previous look.</summary>
+    private bool Settled(ScreenReader.Screen screen)
+    {
+        bool same = _lastScreen == screen;
+        _lastScreen = screen;
+        return same;
+    }
 
     private async void AutoTypeTick(object? sender, EventArgs e)
     {
@@ -497,18 +554,31 @@ internal sealed class SessionView : UserControl
         var color = PromptDetector.Analyze(bmp);
         if (color != PromptDetector.Result.Prompt)
         {
-            // Not a WALLIX page. Now and then read it, to catch Windows' own password screen.
+            // Not a WALLIX page. Now and then read it, to catch Windows' own sign-in screens.
             if (_typedWindows || !ScreenReader.Available || !TargetTypingAllowed() || ++_otherTicks % 4 != 0) { CheckTimeout(); return; }
             var other = ScreenReader.Screen.Unknown;
             _reading = true;
-            try { (other, _) = await ScreenReader.ClassifyAsync(bmp); }
+            try
+            {
+                var r = await ScreenReader.ReadScreenAsync(bmp);
+                other = r.Screen;
+                if (other != ScreenReader.Screen.Unknown) Diag.Log($"[{Machine.Name}] auto: screen={other} boxes={r.Boxes}");
+            }
             catch (Exception ex) { Diag.Log($"[{Machine.Name}] OCR error: {ex.Message}"); }
             finally { _reading = false; }
-            if (other == ScreenReader.Screen.WindowsPassword && IsConnected && !_typing && _store.ResolveCredential(Machine) is { } wc)
+            bool settled = Settled(other);
+            if (!settled || !IsConnected || _typing || _store.ResolveCredential(Machine) is not { } wc) { CheckTimeout(); return; }
+            if (other == ScreenReader.Screen.WindowsPassword)
             {
                 _typedWindows = true;
                 Diag.Log($"[{Machine.Name}] auto: Windows password screen");
                 FillPassword(wc.Password);
+            }
+            else if (other == ScreenReader.Screen.WindowsLogin)
+            {
+                _typedWindows = true;
+                Diag.Log($"[{Machine.Name}] auto: Windows user name + password screen");
+                FillLogin(wc.Username, wc.Password);
             }
             else CheckTimeout();
             return;
@@ -524,6 +594,8 @@ internal sealed class SessionView : UserControl
             finally { _reading = false; }
             if (!IsConnected || _rdp == null || _typing) return;
             Diag.Log($"[{Machine.Name}] auto: login page, screen={screen}");
+            // A page still being drawn reads differently from one frame to the next: act once it reads the same twice.
+            if (!Settled(screen)) return;
         }
 
         var b2 = _store.Data.Bastion;
@@ -534,24 +606,23 @@ internal sealed class SessionView : UserControl
                 {
                     _typedBastion = true; _visibleWaitMs = 0;
                     var login = b2.InteractiveLoginUsesTarget ? Store.BuildBastionLogin(b2, Machine) : b2.PrimaryUser;
-                    FillLogin(login, b2.PrimaryPassword);           // step 1; keep watching for step 2
+                    FillLogin(login, b2.PrimaryPassword, keepWatching: true); // step 1; keep watching for step 2
                 }
                 return;
 
-            case ScreenReader.Screen.WindowsPassword:
-                if (!_typedWindows && TargetTypingAllowed() && _store.ResolveCredential(Machine) is { } pc)
-                {
-                    _typedWindows = true;
-                    FillPassword(pc.Password);
-                }
-                return;
-
+            // A WALLIX page always has a login and a password box: a "password only" reading of it is OCR
+            // missing the login label, and typing just the password would put it in the login box.
             case ScreenReader.Screen.TargetPrompt:
                 if (!_typedTarget && TargetTypingAllowed())
                 {
                     var c = _store.ResolveCredential(Machine);
-                    if (c != null) { _typedTarget = true; StopAutoType(); FillLogin(c.Username, c.Password); }
+                    // Keep watching: when WALLIX can't pass the login on, Windows asks for the password itself.
+                    if (c != null) { _typedTarget = true; _visibleWaitMs = 0; FillLogin(c.Username, c.Password, keepWatching: true); }
                 }
+                return;
+
+            case ScreenReader.Screen.Selector:
+                CheckTimeout(); // the machine list: nothing to type
                 return;
 
             default:
@@ -608,10 +679,13 @@ internal sealed class SessionView : UserControl
     }
 
     /// <summary>
-    /// Fills login + password on whatever screen is currently showing, using clipboard paste (reliable,
-    /// layout-independent). One paste per field instead of dozens of fragile keystrokes.
+    /// Fills login + password on whatever screen is currently showing. With the US layout the keys are
+    /// typed; otherwise each field is pasted from the clipboard (layout-independent).
+    /// The login, the Tab and the password go in separate steps with pauses: sent as one burst, a Tab
+    /// the session missed put the password into the login box.
     /// </summary>
-    public async void FillLogin(string login, string password)
+    /// <param name="keepWatching">Auto-fill of WALLIX's own login (step 1): keep watching for step 2.</param>
+    public async void FillLogin(string login, string password, bool keepWatching = false)
     {
         if (_typing || _rdp == null || !IsConnected) { if (!IsConnected) Notify?.Invoke(this, "Not connected."); return; }
         // Never type unless THIS session is the one on screen and no dialog is open — otherwise the
@@ -621,51 +695,41 @@ internal sealed class SessionView : UserControl
             Notify?.Invoke(this, "Bring the session tab to the front (close any open dialog), then press Ctrl+Alt+K.");
             return;
         }
-        StopAutoType();
+        if (!keepWatching) StopAutoType();
         _typing = true;
-        bool ok = true;
-        Diag.Log($"[{Machine.Name}] FILL (clipboard) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
+        bool ok = true, pasted = false;
+        bool type = _store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(login + password, out _);
+        Diag.Log($"[{Machine.Name}] FILL ({(type ? "keys" : "clipboard")}) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
         try
         {
-            if (!FocusSession())
+            if (!await PrepareInput())
             {
                 Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again.");
                 return;
             }
-            await Task.Delay(150);
 
-            // Wake the input channel; the RDP session drops the first keystrokes after focus lands.
-            SendKeysRobust(KeyTyper.KeyPress(0x2A)); // Shift tap (harmless)
-            await Task.Delay(90);
-
-            if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(login + password, out _))
+            if (type)
             {
-                // Fast path: the session uses the US layout, so type the keys directly (no clipboard round-trip).
-                var keys = new List<(int sc, bool up)>();
-                KeyTyper.AppendSelectAll(keys);
-                KeyTyper.AppendText(keys, login);
-                KeyTyper.AppendKey(keys, KeyTyper.Tab);
-                ok &= SendKeysRobust(keys);
-                await Task.Delay(120);
-                keys.Clear();
-                KeyTyper.AppendSelectAll(keys);
-                KeyTyper.AppendText(keys, password);
-                KeyTyper.AppendKey(keys, KeyTyper.Enter);
-                ok &= SendKeysRobust(keys);
+                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(login));
+                await Task.Delay(150);
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
+                await Task.Delay(250);
+                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
+                await Task.Delay(150);
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
             }
             else
             {
+                pasted = true;
                 ok &= await PasteField(login);              // login field
-                await Task.Delay(100);
-                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
-                await Task.Delay(150);
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
+                await Task.Delay(250);
                 ok &= await PasteField(password);           // password field
-                await Task.Delay(100);
-                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
             }
             await Task.Delay(300);
 
-            Diag.Log($"[{Machine.Name}] FILL done ok={ok}  after={Diag.SaveCapture(PromptDetector.CaptureSession(_rdp), "afterfill")}");
+            if (Diag.Enabled) Diag.Log($"[{Machine.Name}] FILL done ok={ok}  after={Diag.SaveCapture(PromptDetector.CaptureSession(_rdp), "afterfill")}");
         }
         catch (Exception ex)
         {
@@ -674,10 +738,12 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
-            ClearClipboard();
+            if (pasted) ClearClipboard();
             _typing = false;
         }
-        if (!ok) Notify?.Invoke(this, "Fill may be incomplete — press Ctrl+Alt+K and pick again, or check that clipboard redirection is on in ⚙ Settings.");
+        if (!ok) Notify?.Invoke(this, type
+            ? "Fill may be incomplete — press Ctrl+Alt+K and pick again."
+            : "Fill may be incomplete — press Ctrl+Alt+K and pick again, or check that clipboard redirection is on in ⚙ Settings.");
     }
 
     /// <summary>Windows' sign-in / lock screen: only the password box (the user is already chosen).</summary>
@@ -689,27 +755,23 @@ internal sealed class SessionView : UserControl
             Notify?.Invoke(this, "Bring the session tab to the front, then press Ctrl+Alt+K.");
             return;
         }
+        StopAutoType(); // the last screen there is to fill
         _typing = true;
-        bool ok = true;
+        bool ok = true, pasted = false;
         try
         {
-            if (!FocusSession()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
-            await Task.Delay(150);
-            SendKeysRobust(KeyTyper.KeyPress(0x2A)); // wake the input channel
-            await Task.Delay(90);
+            if (!await PrepareInput()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
             if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(password, out _))
             {
-                var keys = new List<(int sc, bool up)>();
-                KeyTyper.AppendSelectAll(keys);
-                KeyTyper.AppendText(keys, password);
-                KeyTyper.AppendKey(keys, KeyTyper.Enter);
-                ok &= SendKeysRobust(keys);
+                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
+                await Task.Delay(150);
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
             }
             else
             {
+                pasted = true;
                 ok &= await PasteField(password);
-                await Task.Delay(100);
-                SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
             }
             await Task.Delay(300);
         }
@@ -720,7 +782,7 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
-            ClearClipboard();
+            if (pasted) ClearClipboard();
             _typing = false;
         }
         if (!ok) Notify?.Invoke(this, "The password may not have been typed — press Ctrl+Alt+K and pick again.");
@@ -731,15 +793,21 @@ internal sealed class SessionView : UserControl
     {
         if (_rdp == null || !IsConnected) return;
         var screen = ScreenReader.Screen.Unknown;
-        if (ScreenReader.Available)
+        bool wallix = false;
+        using (var bmp = PromptDetector.CaptureSession(_rdp))
         {
-            using var bmp = PromptDetector.CaptureSession(_rdp);
             if (bmp != null)
             {
-                try { (screen, _) = await ScreenReader.ClassifyAsync(bmp); } catch { /* fill both fields */ }
+                try
+                {
+                    var r = await ScreenReader.ReadScreenAsync(bmp);
+                    (screen, wallix) = (r.Screen, r.Wallix); // a WALLIX page always has a login box too
+                    Diag.Log($"[{Machine.Name}] fill picked: screen={screen} wallixColours={wallix} boxes={r.Boxes} text=\"{r.Text.Replace('\n', ' ')}\"");
+                }
+                catch (Exception ex) { Diag.Log($"[{Machine.Name}] fill: reading the screen failed: {ex.Message}"); }
             }
         }
-        if (screen == ScreenReader.Screen.WindowsPassword) FillPassword(password);
+        if (screen == ScreenReader.Screen.WindowsPassword && !wallix) FillPassword(password);
         else FillLogin(login, password);
     }
 
@@ -751,14 +819,44 @@ internal sealed class SessionView : UserControl
         FillSmart(login, password);
     }
 
+    /// <summary>
+    /// Gets the session ready for keystrokes: waits until the user lets go of Ctrl/Alt/Shift/Win (still
+    /// held from a shortcut, they would turn our keys into shortcuts), puts the keyboard focus in the
+    /// session, and wakes its input channel, which drops the first keystrokes after focus lands.
+    /// </summary>
+    private async Task<bool> PrepareInput()
+    {
+        for (int i = 0; i < 30 && Win.ModifiersDown(); i++) await Task.Delay(50);
+        if (!FocusSession()) return false;
+        await Task.Delay(150);
+        SendKeysRobust(KeyTyper.KeyPress(0x2A)); // Shift tap (harmless)
+        await Task.Delay(200);
+        return _rdp != null && IsConnected;
+    }
+
+    /// <summary>Sends keys a few characters at a time, letting the session take in each group before the next.</summary>
+    private async Task<bool> TypeKeysAsync(List<(int sc, bool up)> keys)
+    {
+        bool ok = true;
+        foreach (var chunk in KeyTyper.Chunks(keys, 24))
+        {
+            if (_rdp == null || !IsConnected) return false;
+            ok &= SendKeysRobust(chunk);
+            await Task.Delay(15);
+        }
+        return ok;
+    }
+
     private async Task<bool> PasteField(string text)
     {
         if (!SetClipboard(text)) { Diag.Log($"[{Machine.Name}] clipboard set failed"); return false; }
-        await Task.Delay(300); // let the clipboard sync to the remote session
+        await Task.Delay(450); // let the clipboard sync to the remote session
         bool a = SendKeysRobust(KeyTyper.SelectAll());
-        await Task.Delay(70);
+        await Task.Delay(80);
         bool v = SendKeysRobust(KeyTyper.Paste());
-        await Task.Delay(90);
+        // The session fetches the text only when it pastes (over a bastion that takes a while). Changing
+        // the clipboard before then pasted the password into the login box, or nothing at all.
+        await Task.Delay(500);
         return a && v;
     }
 
@@ -848,6 +946,8 @@ internal sealed class SessionView : UserControl
         if (root == IntPtr.Zero || _rdp == null) return false;
         try
         {
+            // Already typing into the session: moving the focus again between keys made it lose some.
+            if (Win.GetForegroundWindow() == root && Win.Contains(_rdp, Win.FocusedWindow())) return true;
             if (Win.GetForegroundWindow() != root) Win.SetForegroundWindow(root);
             FindForm()?.Activate(); // our own pop-out window; embedded sessions have none
             _rdp.Focus();

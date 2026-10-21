@@ -84,6 +84,47 @@ internal static class Win
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
     [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int pid);
 
+    /// <summary>The first window of class <paramref name="className"/> anywhere below <paramref name="parent"/>.</summary>
+    public static IntPtr FindDescendant(IntPtr parent, string className)
+    {
+        IntPtr found = IntPtr.Zero;
+        var name = new System.Text.StringBuilder(64);
+        EnumChildWindows(parent, (hwnd, _) =>
+        {
+            name.Clear();
+            GetClassName(hwnd, name, name.Capacity);
+            if (name.ToString() != className) return true;
+            found = hwnd;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>Posts a key press (down + up) straight to a window, without it needing the focus.</summary>
+    public static void PostKey(IntPtr hwnd, int vk, int scanCode)
+    {
+        var down = (IntPtr)(1 | (scanCode << 16));
+        var up = (IntPtr)(1 | (scanCode << 16) | (1 << 30) | unchecked((int)0x80000000));
+        PostMessage(hwnd, WM_KEYDOWN, (IntPtr)vk, down);
+        PostMessage(hwnd, WM_KEYUP, (IntPtr)vk, up);
+    }
+
+    private const uint WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101;
+    private delegate bool EnumProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc proc, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int max);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+
+    /// <summary>Ctrl, Alt, Shift or a Windows key is physically held down right now.</summary>
+    public static bool ModifiersDown()
+    {
+        foreach (var vk in new[] { 0x10 /* Shift */, 0x11 /* Ctrl */, 0x12 /* Alt */, 0x5B, 0x5C /* Win */ })
+            if ((GetAsyncKeyState(vk) & 0x8000) != 0) return true;
+        return false;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
 
