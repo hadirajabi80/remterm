@@ -19,6 +19,7 @@ export const EMPTY_HOST: Host = {
   startupCommand: '',
   hasSecret: false,
   lastUsed: 0,
+  favorite: false,
   protocol: 'ssh',
   tags: [],
   keyId: '',
@@ -235,6 +236,10 @@ export function HostDialog(props: {
                   <option key={g} value={g} />
                 ))}
               </datalist>
+              <label className="check" style={{ marginTop: 6 }}>
+                <input type="checkbox" checked={!!h.favorite} onChange={(e) => set('favorite', e.target.checked)} />
+                ★ Favorite
+              </label>
             </label>
             <label className="field">
               Environment

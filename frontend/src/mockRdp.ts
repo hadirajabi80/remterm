@@ -14,6 +14,7 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
     { ...base, id: id(), name: 'IRPT-Report01', ip: '10.20.1.15', target: 'Interactive@IRPT-Report01-10.20.1.15:RDP', group: 'IRPT' },
     { ...base, id: id(), name: 'PTN-App', ip: '10.30.0.8', target: 'Interactive@PTN-App-10.30.0.8:RDP', group: 'PTN' },
     { ...base, id: id(), name: 'Lab PC', ip: '192.168.1.40', target: '', group: '', mode: 'direct' },
+    { ...base, id: id(), name: 'DC-01', ip: '10.0.0.5', target: '', group: 'Clients/Acme/Production', mode: 'direct', username: 'CORP\admin', hasPassword: true },
   ];
   const creds: (RdpCredential & { password: string })[] = [{ id: id(), name: 'Default', username: 'CORP\\hadi', hasPassword: true, password: 'x' }];
   const data: RdpData = {
@@ -73,8 +74,10 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
       return status();
     },
     data: () => ({ ...data, credentials: creds.map(({ password: _, ...c }) => c) }),
-    saveMachine: ({ machine }) => {
+    saveMachine: ({ machine, password }) => {
+      const old = machines.find((x) => x.id === machine.id);
       const m = { ...machine, id: machine.id || id() } as Machine;
+      m.hasPassword = !m.username ? false : password != null ? !!password : !!old?.hasPassword;
       const i = machines.findIndex((x) => x.id === m.id);
       if (i >= 0) machines[i] = m;
       else machines.push(m);

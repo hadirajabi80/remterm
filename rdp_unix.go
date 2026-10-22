@@ -34,11 +34,28 @@ type rdpMachine struct {
 	Group        string  `json:"group"`
 	Mode         string  `json:"mode"` // "bastion" | "direct"
 	CredentialID *string `json:"credentialId"`
-	AutoType     string  `json:"autoType"`
-	Favorite     bool    `json:"favorite"`
-	LastUsed     *string `json:"lastUsed"`
-	Notes        string  `json:"notes"`
-	KeepAlive    bool    `json:"keepAlive"`
+	// The machine's own login (password in the keychain as rdp:machine:<id>); empty = CredentialID.
+	Username    string  `json:"username"`
+	HasPassword bool    `json:"hasPassword"`
+	AutoType    string  `json:"autoType"`
+	Favorite    bool    `json:"favorite"`
+	LastUsed    *string `json:"lastUsed"`
+	Notes       string  `json:"notes"`
+	KeepAlive   bool    `json:"keepAlive"`
+	Quality     string  `json:"quality,omitempty"`
+}
+
+func machineSecret(id string) string { return "rdp:machine:" + id }
+
+// setMachinePassword stores (or with "" removes) a machine's own password.
+func setMachinePassword(m *rdpMachine, pw string) error {
+	if pw == "" {
+		deleteNamedSecret(machineSecret(m.ID))
+	} else if err := setNamedSecret(machineSecret(m.ID), pw); err != nil {
+		return err
+	}
+	m.HasPassword = pw != ""
+	return nil
 }
 
 type rdpCredential struct {
@@ -215,16 +232,32 @@ func (e *rdpEngine) call(method string, p map[string]json.RawMessage) (any, bool
 		if m.CredentialID != nil && *m.CredentialID == "" {
 			m.CredentialID = nil
 		}
+		m.Username = strings.TrimSpace(m.Username)
+		idx := -1
 		for i := range d.Machines {
 			if d.Machines[i].ID == m.ID && m.ID != "" {
-				m.LastUsed = d.Machines[i].LastUsed
-				d.Machines[i] = m
-				return m, true, nil
+				idx = i
 			}
 		}
-		m.ID, m.LastUsed = newID(), nil
-		d.Machines = append(d.Machines, m)
-		return m, true, nil
+		if idx >= 0 {
+			m.LastUsed, m.HasPassword = d.Machines[idx].LastUsed, d.Machines[idx].HasPassword
+			d.Machines[idx] = m
+		} else {
+			m.ID, m.LastUsed, m.HasPassword = newID(), nil, false
+			d.Machines = append(d.Machines, m)
+			idx = len(d.Machines) - 1
+		}
+		cur := &d.Machines[idx]
+		pw := optStr(p, "password")
+		if cur.Username == "" {
+			pw = new(string) // no own login: no own password either
+		}
+		if pw != nil {
+			if err := setMachinePassword(cur, *pw); err != nil {
+				return nil, false, err
+			}
+		}
+		return *cur, true, nil
 	case "deleteMachines":
 		var ids []string
 		_ = json.Unmarshal(p["ids"], &ids)
@@ -232,6 +265,8 @@ func (e *rdpEngine) call(method string, p map[string]json.RawMessage) (any, bool
 		for _, m := range d.Machines {
 			if !contains(ids, m.ID) {
 				kept = append(kept, m)
+			} else if m.HasPassword {
+				deleteNamedSecret(machineSecret(m.ID))
 			}
 		}
 		d.Machines = kept
@@ -479,7 +514,19 @@ func (e *rdpEngine) endpoint(p map[string]json.RawMessage) (ep rdpEndpoint, err 
 			fmt.Sscanf(host[i+1:], "%d", &port)
 			host = host[:i]
 		}
-		if c, ok := e.resolveCredential(m); ok {
+		if m.Username != "" {
+			user, which = m.Username, "login"
+			if m.ID != "" {
+				password = getNamedSecret(machineSecret(m.ID))
+			} else {
+				// A typed address with a login from the connect prompt: used once, never stored.
+				var typed struct {
+					Password string `json:"password"`
+				}
+				_ = json.Unmarshal(p["machine"], &typed)
+				password = typed.Password
+			}
+		} else if c, ok := e.resolveCredential(m); ok {
 			user, password, which = c.Username, getNamedSecret("rdp:cred:"+c.ID), "login"
 		}
 	} else {
@@ -549,6 +596,16 @@ func (e *rdpEngine) rememberLogin(p map[string]json.RawMessage) (any, bool, erro
 			return nil, false, err
 		}
 		return nil, true, nil
+	}
+	// A saved machine keeps the login as its own (shown and editable in its dialog).
+	for i := range d.Machines {
+		if d.Machines[i].ID == id && id != "" {
+			d.Machines[i].Username = user
+			if err := setMachinePassword(&d.Machines[i], password); err != nil {
+				return nil, false, err
+			}
+			return nil, true, nil
+		}
 	}
 	var cred *rdpCredential
 	for i := range d.Credentials {

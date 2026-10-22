@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { clipboard } from '../api';
-import { lastUsedMs, machineDetail } from '../rdp';
+import { lastUsedMs, machineDetail, machineSub } from '../rdp';
 import { NO_CREDENTIAL, type Machine, type RdpData, type RdpStatus, type TabStatus } from '../types';
 import { matches } from '../util';
 import { Icon } from './Icon';
@@ -38,6 +38,44 @@ export interface RdpCtx {
 }
 
 const UNGROUPED = 'Ungrouped';
+
+/** Right-click menu of a Remote Desktop machine (also used by the Connections panel). */
+export function machineMenuItems(ctx: RdpCtx, data: RdpData, m: Machine): (MenuItem | 'sep')[] {
+  const credItem = (m: Machine, label: string, id: string | null): MenuItem => ({
+    label: `Login: ${label}`,
+    icon: !m.username && (m.credentialId ?? null) === id ? <Icon name="check" size={13} /> : <span />,
+    onClick: () => ctx.save({ ...m, username: '', credentialId: id }),
+  });
+
+  const items: (MenuItem | 'sep')[] = [
+    { label: 'Connect', icon: <Icon name="play" size={12} />, onClick: () => ctx.connect(m) },
+    { label: 'Connect in split', icon: <Icon name="splitRight" size={13} />, onClick: () => ctx.connect(m, true) },
+    ...(ctx.openStatus[m.id] ? [{ label: 'Switch to open session', icon: <Icon name="monitor" size={13} />, onClick: () => ctx.switchTo(m) }] : []),
+    'sep',
+    { label: 'Edit…', icon: <Icon name="edit" size={13} />, hint: 'F2', onClick: () => ctx.edit(m) },
+    { label: m.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <Icon name="star" size={13} />, onClick: () => ctx.save({ ...m, favorite: !m.favorite }) },
+    {
+      label: 'Keep connected',
+      hint: m.keepAlive ? 'on' : 'off',
+      icon: m.keepAlive ? <Icon name="check" size={13} /> : <Icon name="pulse" size={13} />,
+      onClick: () => ctx.save({ ...m, keepAlive: !m.keepAlive }),
+    },
+    { label: 'Copy IP', icon: <Icon name="copy" size={13} />, disabled: !m.ip, onClick: () => void clipboard.write(m.ip) },
+    ...(m.mode === 'bastion'
+      ? [{ label: 'Copy WALLIX target', icon: <Icon name="copy" size={13} />, disabled: !m.target, onClick: () => void clipboard.write(m.target) }]
+      : []),
+    'sep',
+    m.username
+      ? { label: `Login: ${m.username} (this machine)`, icon: <Icon name="check" size={13} />, onClick: () => ctx.edit(m) }
+      : { label: 'Login: type a user and password…', icon: <Icon name="key" size={13} />, onClick: () => ctx.edit(m) },
+    credItem(m, '★ default', null),
+    ...data.credentials.map((c) => credItem(m, c.name, c.id)),
+    credItem(m, m.mode === 'direct' ? 'ask each time' : 'none (type myself)', NO_CREDENTIAL),
+    'sep',
+    { label: 'Delete', icon: <Icon name="trash" size={13} />, hint: 'Del', onClick: () => ctx.remove([m], `"${m.name}"`) },
+  ];
+  return items;
+}
 
 export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
   const [query, setQuery] = useState('');
@@ -115,36 +153,7 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
       .forEach(([g, items]) => sections.push({ key: 'g:' + g, title: g, items: items.sort(byName), group: g }));
   }
 
-  const credItem = (m: Machine, label: string, id: string | null): MenuItem => ({
-    label: `Login: ${label}`,
-    icon: (m.credentialId ?? null) === id ? <Icon name="check" size={13} /> : <span />,
-    onClick: () => ctx.save({ ...m, credentialId: id }),
-  });
-
-  const machineMenu = (m: Machine): (MenuItem | 'sep')[] => [
-    { label: 'Connect', icon: <Icon name="play" size={12} />, onClick: () => ctx.connect(m) },
-    { label: 'Connect in split', icon: <Icon name="splitRight" size={13} />, onClick: () => ctx.connect(m, true) },
-    ...(ctx.openStatus[m.id] ? [{ label: 'Switch to open session', icon: <Icon name="monitor" size={13} />, onClick: () => ctx.switchTo(m) }] : []),
-    'sep',
-    { label: 'Edit…', icon: <Icon name="edit" size={13} />, hint: 'F2', onClick: () => ctx.edit(m) },
-    { label: m.favorite ? 'Remove from favorites' : 'Add to favorites', icon: <Icon name="star" size={13} />, onClick: () => ctx.save({ ...m, favorite: !m.favorite }) },
-    {
-      label: 'Keep connected',
-      hint: m.keepAlive ? 'on' : 'off',
-      icon: m.keepAlive ? <Icon name="check" size={13} /> : <Icon name="pulse" size={13} />,
-      onClick: () => ctx.save({ ...m, keepAlive: !m.keepAlive }),
-    },
-    { label: 'Copy IP', icon: <Icon name="copy" size={13} />, disabled: !m.ip, onClick: () => void clipboard.write(m.ip) },
-    ...(m.mode === 'bastion'
-      ? [{ label: 'Copy WALLIX target', icon: <Icon name="copy" size={13} />, disabled: !m.target, onClick: () => void clipboard.write(m.target) }]
-      : []),
-    'sep',
-    credItem(m, '★ default', null),
-    ...data.credentials.map((c) => credItem(m, c.name, c.id)),
-    credItem(m, 'none (type myself)', NO_CREDENTIAL),
-    'sep',
-    { label: 'Delete', icon: <Icon name="trash" size={13} />, hint: 'Del', onClick: () => ctx.remove([m], `"${m.name}"`) },
-  ];
+  const machineMenu = (m: Machine) => machineMenuItems(ctx, data, m);
 
   const groupMenu = (g: string, items: Machine[]): MenuEntry[] => [
     { label: `Connect all (${items.length})`, icon: <Icon name="play" size={12} />, onClick: () => ctx.connectAll(items) },
@@ -193,7 +202,7 @@ export function RdpPanel({ ctx }: { ctx: RdpCtx }) {
               </span>
             )}
           </div>
-          <div className="row-sub">{m.mode === 'direct' ? m.ip : m.ip || m.target || 'WALLIX list'}</div>
+          <div className="row-sub">{machineSub(m)}</div>
         </div>
         <div className="row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button className="icon-btn sm" title="Connect" onClick={() => ctx.connect(m)}>

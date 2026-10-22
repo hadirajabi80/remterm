@@ -12,6 +12,9 @@ export interface OpenRequest {
   machineId?: string;
   machine?: Partial<Machine>;
   selector?: boolean;
+  /** A login typed in the connect prompt, used for this session only. */
+  username?: string;
+  password?: string;
 }
 
 export const rdp = {
@@ -21,7 +24,8 @@ export const rdp = {
   lock: () => call<RdpStatus>('lock'),
 
   data: () => call<RdpData>('data'),
-  saveMachine: (machine: Machine) => call<Machine>('saveMachine', { machine }),
+  /** password: null/undefined keeps the machine's saved password, a string replaces it. */
+  saveMachine: (machine: Machine, password?: string | null) => call<Machine>('saveMachine', { machine, password: password ?? null }),
   deleteMachines: (ids: string[]) => call<void>('deleteMachines', { ids }),
   renameGroup: (from: string, to: string) => call<void>('renameGroup', { from, to }),
   saveCredential: (credential: Omit<RdpCredential, 'hasPassword'>, password: string | null) =>
@@ -88,7 +92,19 @@ export const makeTarget = (name: string, ip: string) => (ip.trim() ? `Interactiv
 
 export const machineDetail = (m: Machine) => (m.mode === 'direct' ? `${m.ip} · direct` : m.target || 'WALLIX list');
 
-export const lastUsedMs = (m: Machine) => (m.lastUsed ? Date.parse(m.lastUsed) || 0 : 0);
+/** Second line of a machine in the lists: user@address, or the WALLIX target. */
+export const machineSub = (m: Machine) =>
+  m.mode === 'direct' ? `${m.username ? m.username + '@' : ''}${m.ip}` : m.ip || m.target || 'WALLIX list';
+
+export const lastUsedMs =(m: Machine) => (m.lastUsed ? Date.parse(m.lastUsed) || 0 : 0);
+
+/** The login a connection would use without asking: its own, an assigned saved login, or the default one. */
+export function machineHasLogin(m: Machine, d: RdpData): boolean {
+  if (m.username) return true;
+  if (m.credentialId === 'none') return false;
+  if (m.credentialId) return d.credentials.some((c) => c.id === m.credentialId);
+  return d.credentials.length > 0;
+}
 
 /** A bare host or IP (optionally :port), for "Remote Desktop to …" quick connect. */
 export const RDP_HOST_RE = /^(\d{1,3}(\.\d{1,3}){3}|[a-z0-9][\w-]*(\.[\w-]+)+)(:\d{1,5})?$/i;

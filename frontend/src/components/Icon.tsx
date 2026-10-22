@@ -16,6 +16,14 @@ const PATHS: Record<string, JSX.Element> = {
     </>
   ),
   import: <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />,
+  connections: (
+    <>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </>
+  ),
   server: (
     <>
       <rect x="3" y="4" width="18" height="7" rx="2" />

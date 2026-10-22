@@ -29,7 +29,7 @@ export function installMock() {
     serial: null,
   };
   let hosts: Host[] = [
-    { ...base, id: id(), name: 'api-prod-1', group: 'Clients/Acme/Production', env: 'prod', address: '10.0.1.12', user: 'deploy', tags: ['docker', 'dotnet'] },
+    { ...base, id: id(), name: 'api-prod-1', group: 'Clients/Acme/Production', favorite: true, env: 'prod', address: '10.0.1.12', user: 'deploy', tags: ['docker', 'dotnet'] },
     { ...base, id: id(), name: 'db-prod', group: 'Clients/Acme/Production', env: 'prod', address: '10.0.1.20', user: 'deploy', tags: ['postgres'] },
     { ...base, id: id(), name: 'web-staging', group: 'Clients/Acme/Staging', env: 'staging', address: 'staging.example.com', user: 'ubuntu', tags: ['nginx', 'node'] },
     { ...base, id: id(), name: 'core-switch', group: 'Network', env: '', address: '10.0.0.2', user: 'admin', protocol: 'telnet', port: 23 },
