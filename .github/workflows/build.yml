@@ -3,8 +3,8 @@ name: Build
 # macOS apps can only be built on a Mac: this builds Remterm.app (universal) and the
 # .dmg on GitHub's macOS runners. On a published release the .dmg is attached to it;
 # "Run workflow" builds one to download from the run's artifacts.
-# The Windows job runs build.ps1 (Remterm.exe, RemtermRdp.exe and the setup) for
-# PCs that cannot build locally; its files are in the run's artifacts.
+# The Windows job runs build.ps1 (Remterm.exe, RemtermRdp.exe and the setup); the
+# files are in the run's artifacts, and on a published release the setup is attached.
 on:
   release:
     types: [published]
@@ -47,6 +47,14 @@ jobs:
         with:
           name: Remterm-Windows
           path: build/bin/*.exe
+
+      # The in-app updater downloads RemtermSetup-<version>.exe from the release.
+      - name: Attach the setup to the release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" build/bin/RemtermSetup-*.exe --clobber
 
   macos:
     runs-on: macos-14
