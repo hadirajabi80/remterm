@@ -3,6 +3,8 @@ name: Build
 # macOS apps can only be built on a Mac: this builds Remterm.app (universal) and the
 # .dmg on GitHub's macOS runners. On a published release the .dmg is attached to it;
 # "Run workflow" builds one to download from the run's artifacts.
+# The Windows job runs build.ps1 (Remterm.exe, RemtermRdp.exe and the setup) for
+# PCs that cannot build locally; its files are in the run's artifacts.
 on:
   release:
     types: [published]
@@ -16,6 +18,36 @@ permissions:
   contents: write
 
 jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Remterm.exe, RemtermRdp.exe + setup
+        shell: pwsh
+        run: |
+          $version = '${{ github.event.release.tag_name || inputs.version }}'.TrimStart('v')
+          ./build.ps1 -Installer -Version $version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remterm-Windows
+          path: build/bin/*.exe
+
   macos:
     runs-on: macos-14
     steps:
