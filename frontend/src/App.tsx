@@ -6,7 +6,7 @@ import { gridLayout, leaves, neighbor, remapLayout, removePane, setRatio, splitP
 import { TermSession, type AuthKind, type TermOptions } from './terminal';
 import { DEFAULT_APPEARANCE, backgroundCss, getScheme } from './themes';
 import { transfers } from './transfers';
-import { lastUsedMs, machineDetail, onRdpEvent, rdp } from './rdp';
+import { lastUsedMs, machineDetail, machineHasLogin, onRdpEvent, rdp } from './rdp';
 import type {
   Appearance,
   GroupConfig,
@@ -58,7 +58,7 @@ import { FillPicker, type FillChoice } from './components/FillPicker';
 import { colorCss, hostColor, rdpGroupKey } from './colors';
 import type { TabPreviewData } from './components/TabPreview';
 import type { RdpCtx } from './components/RdpPanel';
-import { ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
+import { EMPTY_MACHINE, ImportDialog, LockScreen, LoginsDialog, MachineDialog, RdpLoginPrompt, RdpSettingsDialog, type RdpSettingsTab } from './components/RdpDialogs';
 import { TabDropOverlay, type DropSide, type TabDrag } from './components/TabDrop';
 import { UpdateBanner } from './components/UpdateBanner';
 import type { UpdateInfo } from './api';
@@ -69,9 +69,12 @@ type RdpDialogState =
   | { kind: 'machine'; machine: Machine | null; group?: string }
   | { kind: 'logins' }
   | { kind: 'settings'; tab?: RdpSettingsTab }
-  | { kind: 'import' };
+  | { kind: 'import' }
+  | { kind: 'login'; target: RdpTarget; split: boolean; host: string; machine?: Machine };
 
 const STATUS_RANK: Record<TabStatus, number> = { connected: 3, connecting: 2, reconnecting: 1, disconnected: 0 };
+/** Where a one-off login typed for a connection is kept: per typed address or per machine. */
+const rdpLoginKey = (t: RdpTarget) => (t.adhoc ? 'ip:' + t.adhoc.ip.toLowerCase() : 'm:' + (t.machineId ?? ''));
 const rdpErrorText = (msg: string) => msg.replace(/^(BASTION|LOCKED|NO_RDP_CLIENT):\s*/, '');
 
 interface AuthRequest {
@@ -137,7 +140,7 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [panes, setPanes] = useState<Record<string, Pane>>({});
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [panel, setPanel] = useState<Panel>('hosts');
+  const [panel, setPanel] = useState<Panel>('connections');
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [editingHost, setEditingHost] = useState<{ host: Host | null; group?: string } | null>(null);
@@ -177,6 +180,8 @@ export default function App() {
   panesRef.current = panes;
   const rdpDataRef = useRef(rdpData);
   rdpDataRef.current = rdpData;
+  /** Logins typed in the connect prompt for one-off use (rdpLoginKey -> login); in memory only. */
+  const rdpLogins = useRef(new Map<string, { username: string; password: string }>());
   // Latest state for callbacks fired from terminal sessions.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -469,6 +474,7 @@ export default function App() {
         machineId: target.machineId,
         selector: target.selector,
         machine: target.adhoc ? { id: '', name: target.adhoc.name, ip: target.adhoc.ip, mode: 'direct', target: '', group: '', credentialId: null, autoType: 'auto', notes: '' } : undefined,
+        ...rdpLogins.current.get(rdpLoginKey(target)),
       });
       patchPane(key, { rdpReady: true, title: r.title, message: '' });
     } catch (e) {
@@ -718,7 +724,7 @@ export default function App() {
       const n = await fn();
       notify(n ? `Imported ${n} host${n === 1 ? '' : 's'} from ${what}` : `No new hosts found in ${what}`);
       if (n) {
-        setPanel('hosts');
+        setPanel((p) => (p === 'connections' ? p : 'hosts'));
         await refresh();
       }
     } catch (e) {
@@ -874,10 +880,11 @@ export default function App() {
 
   const showRdpPanel = () => {
     setSidebarOpen(true);
-    setPanel('rdp');
+    setPanel((p) => (p === 'connections' ? p : 'rdp'));
   };
 
-  const connectRdp = (target: RdpTarget, inSplit = false) => {
+  /** asked: a login was just typed for it (or saved), so the connect prompt is not shown again. */
+  const connectRdp = (target: RdpTarget, inSplit = false, asked = false) => {
     const d = rdpDataRef.current;
     if (!d) {
       showRdpPanel();
@@ -888,6 +895,11 @@ export default function App() {
     if ((target.selector || m?.mode === 'bastion') && !d.bastion.host.trim()) {
       notify('Enter the WALLIX bastion address first');
       setRdpDialog({ kind: 'settings', tab: 'bastion' });
+      return;
+    }
+    // A direct connection with no login to use: ask for one (in-tab IronRDP sessions ask by themselves).
+    if (!asked && !d.web && (target.adhoc || (m?.mode === 'direct' && !machineHasLogin(m, d)))) {
+      setRdpDialog({ kind: 'login', target, split: inSplit, host: target.adhoc?.ip ?? m!.ip, machine: m });
       return;
     }
     if (d.external && !d.web) {
@@ -917,6 +929,25 @@ export default function App() {
     }
     if (inSplit) split('auto', target);
     else openTab(target);
+  };
+
+  /** The connect prompt was answered: remember the login on the machine (or as a new one), or use it once. */
+  const rdpLoginConnect = async (req: Extract<RdpDialogState, { kind: 'login' }>, r: { username: string; password: string; remember: boolean }) => {
+    setRdpDialog(null);
+    if (!r.remember) {
+      rdpLogins.current.set(rdpLoginKey(req.target), { username: r.username, password: r.password });
+      connectRdp(req.target, req.split, true);
+      return;
+    }
+    try {
+      const base = req.machine ?? { ...EMPTY_MACHINE, name: req.host, ip: req.host };
+      const saved = await rdp.saveMachine({ ...base, username: r.username, credentialId: null }, r.password);
+      if (!req.machine) notify(`Saved ${saved.name} to your connections`);
+      await refreshRdp();
+      connectRdp({ kind: 'rdp', machineId: saved.id }, req.split, true);
+    } catch (e) {
+      notify(errorMessage(e), 'error');
+    }
   };
 
   const quickRdp = (host: string, inSplit = false) => connectRdp({ kind: 'rdp', adhoc: { name: host, ip: host } }, inSplit);
@@ -1456,6 +1487,11 @@ export default function App() {
     deleteHost: askDeleteHost,
     editGroup: openGroupDialog,
     connectGroup: (path) => connectHosts(hostsInGroup(hosts, path)),
+    toggleFavorite: (h) =>
+      void api
+        .saveHost({ ...h, favorite: !h.favorite }, '')
+        .then(refresh)
+        .catch((e) => notify(errorMessage(e), 'error')),
     importSSHConfig: () => void runImport(api.importSSHConfig, '~/.ssh/config'),
     importPuTTY: () => void runImport(api.importPuTTY, 'PuTTY'),
     runSnippet,
@@ -1925,6 +1961,7 @@ export default function App() {
           machine={rdpDialog.machine}
           defaultGroup={rdpDialog.group}
           data={rdpData}
+          folders={[...hosts.map((h) => h.group), ...groups.map((g) => g.path)]}
           onSaved={(m, connect) => {
             setRdpDialog(null);
             void refreshRdp().then(() => connect && connectRdp({ kind: 'rdp', machineId: m.id }));
@@ -1946,6 +1983,9 @@ export default function App() {
             rdp.fillWith(id, key).catch((e) => notify(errorMessage(e), 'error'));
           }}
         />
+      )}
+      {rdpDialog?.kind === 'login' && (
+        <RdpLoginPrompt host={rdpDialog.host} machine={rdpDialog.machine} onClose={() => setRdpDialog(null)} onConnect={(r) => void rdpLoginConnect(rdpDialog, r)} />
       )}
       {rdpDialog?.kind === 'logins' && rdpData && (
         <LoginsDialog data={rdpData} onChanged={() => void refreshRdp()} onClose={() => setRdpDialog(null)} />

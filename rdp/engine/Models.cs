@@ -60,8 +60,12 @@ public sealed class Machine
     public string Group { get; set; } = "";
     public ConnectionMode Mode { get; set; } = ConnectionMode.Bastion;
 
-    /// <summary>null/empty = default profile, "none" = never type credentials.</summary>
+    /// <summary>null/empty = default profile, "none" = never type credentials. Ignored when <see cref="Username"/> is set.</summary>
     public string? CredentialId { get; set; }
+
+    /// <summary>The machine's own login, typed in its dialog; empty = use <see cref="CredentialId"/>.</summary>
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
     public AutoTypeMode AutoType { get; set; } = AutoTypeMode.Auto;
     public bool Favorite { get; set; }
     public DateTime? LastUsed { get; set; }
@@ -77,10 +81,13 @@ public sealed class Machine
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsAdHoc { get; set; }
 
-    public string Display => string.IsNullOrEmpty(Ip) ? Name : $"{Name}  ·  {Ip}";
+    /// <summary>A detached copy (same id) for a session that uses a one-time login.</summary>
+    public Machine Copy() => (Machine)MemberwiseClone();
 
-    /// <summary>True when a specific credential profile was assigned to this machine (not default/none).</summary>
-    public bool HasOwnCredential => !string.IsNullOrEmpty(CredentialId) && CredentialId != NoCredential;
+    public string Display =>string.IsNullOrEmpty(Ip) ? Name : $"{Name}  ·  {Ip}";
+
+    /// <summary>True when the machine has its own login or a specific credential profile assigned (not default/none).</summary>
+    public bool HasOwnCredential => Username.Length > 0 || (!string.IsNullOrEmpty(CredentialId) && CredentialId != NoCredential);
 
     public bool IsInteractiveTarget =>
         Mode == ConnectionMode.Bastion && Target.StartsWith("Interactive@", StringComparison.OrdinalIgnoreCase);

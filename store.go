@@ -27,6 +27,7 @@ type Host struct {
 	StartupCommand string `json:"startupCommand"`
 	HasSecret      bool   `json:"hasSecret"`
 	LastUsed       int64  `json:"lastUsed"` // unix ms of the last successful connection
+	Favorite       bool   `json:"favorite"`
 
 	Protocol        string        `json:"protocol"` // "ssh" (default), "telnet", "serial"
 	Tags            []string      `json:"tags"`

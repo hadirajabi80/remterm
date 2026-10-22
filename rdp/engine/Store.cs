@@ -18,6 +18,8 @@ internal sealed class Store(Vault vault, AppData data)
 
     public CredentialProfile? ResolveCredential(Machine m)
     {
+        if (!string.IsNullOrEmpty(m.Username))
+            return new CredentialProfile { Id = "machine", Name = m.Name, Username = m.Username, Password = m.Password ?? "" };
         if (m.CredentialId == Machine.NoCredential) return null;
         if (!string.IsNullOrEmpty(m.CredentialId))
             return Data.Credentials.FirstOrDefault(c => c.Id == m.CredentialId);

@@ -12,6 +12,7 @@ export interface Host {
   startupCommand: string;
   hasSecret: boolean;
   lastUsed: number; // unix ms, 0 = never
+  favorite?: boolean; // pinned to the top of the lists
   protocol: string; // '' | 'ssh' | 'telnet' | 'serial'
   tags: string[] | null;
   keyId: string;
@@ -189,7 +190,9 @@ export interface Machine {
   target: string; // WALLIX target, e.g. Interactive@NFCore-172.16.170.221:RDP ('' = WALLIX list)
   group: string;
   mode: RdpConnectMode;
-  credentialId: string | null;
+  credentialId: string | null; // ignored while username is set
+  username?: string; // the machine's own login ('' = credentialId decides)
+  hasPassword?: boolean; // its own password is saved (the password itself stays in the engine)
   autoType: RdpAutoType;
   favorite: boolean;
   lastUsed: string | null; // ISO time

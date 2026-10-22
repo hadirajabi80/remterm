@@ -131,7 +131,7 @@ internal sealed class EngineHost : ApplicationContext
 
             // ---- vault data
             case "data": return Data();
-            case "saveMachine": return SaveMachine(Get<Machine>(p, "machine"));
+            case "saveMachine": return SaveMachine(Get<Machine>(p, "machine"), OptStr(p, "password"));
             case "deleteMachines": DeleteMachines(Get<string[]>(p, "ids")); return null;
             case "renameGroup": RenameGroup(Str(p, "from"), Str(p, "to")); return null;
             case "saveCredential": return SaveCredential(Get<CredentialDto>(p, "credential"), OptStr(p, "password"));
@@ -301,7 +301,7 @@ internal sealed class EngineHost : ApplicationContext
         var b = st.Data.Bastion;
         return new
         {
-            machines = st.Data.Machines,
+            machines = st.Data.Machines.Select(MachineDto),
             credentials = st.Data.Credentials.Select(c => new CredentialDto(c.Id, c.Name, c.Username, c.Password.Length > 0)),
             defaultCredentialId = st.Data.Credentials.Any(c => c.Id == st.Data.Settings.DefaultCredentialId)
                 ? st.Data.Settings.DefaultCredentialId
@@ -320,13 +320,22 @@ internal sealed class EngineHost : ApplicationContext
         };
     }
 
-    private Machine SaveMachine(Machine m)
+    /// <summary>A machine as the UI sees it: its own password never leaves the engine, only whether one is saved.</summary>
+    private static object MachineDto(Machine m) => new
+    {
+        m.Id, m.Name, m.Ip, m.Target, m.Group, m.Mode, m.CredentialId, m.Username, HasPassword = m.Password.Length > 0,
+        m.AutoType, m.Favorite, m.LastUsed, m.Notes, m.KeepAlive, m.Quality,
+    };
+
+    /// <summary>password: null keeps the machine's saved password, anything else replaces it.</summary>
+    private object SaveMachine(Machine m, string? password)
     {
         var st = S;
         m.Name = m.Name.Trim();
         m.Ip = m.Ip.Trim();
         m.Target = m.Target.Trim();
         m.Group = m.Group.Trim();
+        m.Username = (m.Username ?? "").Trim();
         if (m.Name.Length == 0) throw new InvalidOperationException("Please enter a name.");
         if (m.Mode == ConnectionMode.Direct && m.Ip.Length == 0) throw new InvalidOperationException("Direct RDP needs an IP or host name.");
         if (m.CredentialId == "") m.CredentialId = null;
@@ -337,6 +346,7 @@ internal sealed class EngineHost : ApplicationContext
         {
             if (string.IsNullOrEmpty(m.Id)) m.Id = Guid.NewGuid().ToString("N");
             m.LastUsed = null;
+            m.Password = "";
             st.Data.Machines.Add(m);
             existing = m;
         }
@@ -345,11 +355,13 @@ internal sealed class EngineHost : ApplicationContext
             existing.Name = m.Name; existing.Ip = m.Ip; existing.Target = m.Target; existing.Group = m.Group;
             existing.Mode = m.Mode; existing.CredentialId = m.CredentialId; existing.AutoType = m.AutoType;
             existing.Favorite = m.Favorite; existing.Notes = m.Notes ?? ""; existing.KeepAlive = m.KeepAlive;
-            existing.Quality = m.Quality;
+            existing.Quality = m.Quality; existing.Username = m.Username;
             foreach (var s in _sessions.Values.Where(s => s.View.Machine == existing)) { s.View.Title = existing.Name; s.Report(); }
         }
+        if (existing.Username.Length == 0) existing.Password = "";
+        else if (password != null) existing.Password = password;
         st.Save();
-        return existing;
+        return MachineDto(existing);
     }
 
     private void DeleteMachines(string[] ids)
@@ -472,6 +484,14 @@ internal sealed class EngineHost : ApplicationContext
             if (string.IsNullOrWhiteSpace(machine.Name)) machine.Name = machine.Ip;
         }
 
+        // A login typed in Remterm's connect prompt: for this session only, never saved.
+        if (OptStr(p, "username") is { Length: > 0 } user)
+        {
+            if (!machine.IsAdHoc) machine = machine.Copy();
+            machine.Username = user.Trim();
+            machine.Password = OptStr(p, "password") ?? "";
+        }
+
         if (machine.Mode == ConnectionMode.Bastion && string.IsNullOrWhiteSpace(st.Data.Bastion.Host))
             throw new InvalidOperationException("BASTION: Enter the WALLIX bastion address first (Remote Desktop settings).");
 
@@ -496,10 +516,10 @@ internal sealed class EngineHost : ApplicationContext
     {
         if (s == null || Locked) return;
         if (!s.View.IsConnected) { Emit("notify", new { text = "Connect first, then pick a login to fill." }); return; }
-        var entries = FillEntries();
+        var entries = FillEntries(s);
         if (entries.Count == 0)
         {
-            Emit("notify", new { text = "No logins saved yet — add them under Remote Desktop → Logins." });
+            Emit("notify", new { text = "No logins saved yet — add one in the machine's dialog or under Remote Desktop → Logins." });
             return;
         }
 
@@ -529,10 +549,13 @@ internal sealed class EngineHost : ApplicationContext
 
     private CredentialPicker? _picker;
 
-    private List<FillEntry> FillEntries()
+    private List<FillEntry> FillEntries(RdpSession s)
     {
         var st = S;
         var entries = new List<FillEntry>();
+        var m = s.View.Machine;
+        if (m.Username.Length > 0)
+            entries.Add(new FillEntry("machine", m.Username, $"{m.Name}'s login", m.Username, m.Password));
         var b = st.Data.Bastion;
         if (!string.IsNullOrWhiteSpace(b.PrimaryUser) && !string.IsNullOrEmpty(b.PrimaryPassword))
             entries.Add(new FillEntry("bastion", b.PrimaryUser, "bastion / step 1", b.PrimaryUser, b.PrimaryPassword, IsBastion: true));
@@ -544,7 +567,7 @@ internal sealed class EngineHost : ApplicationContext
     /// <summary>A login picked in Remterm's list: typed once the session is back on screen.</summary>
     private void FillWith(RdpSession s, string key)
     {
-        var f = FillEntries().FirstOrDefault(e => e.Key == key) ?? throw new InvalidOperationException("That login was deleted.");
+        var f = FillEntries(s).FirstOrDefault(e => e.Key == key) ?? throw new InvalidOperationException("That login was deleted.");
         s.View.FillSmartWhenShown(f.Login, f.Password);
     }
 

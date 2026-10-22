@@ -975,6 +975,10 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 14px 14px;
 }
+/* Side-by-side fields keep their boxes on one line even when one label wraps. */
+.form-grid > .field {
+  justify-content: flex-end;
+}
 .stack {
   display: flex;
   flex-direction: column;
@@ -2567,13 +2571,19 @@ select.input {
   }
 }
 
+/* Show/hide sits inside the box, so a password box is as wide as its neighbours. */
 .pw-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
 }
 .pw-row .input {
   flex: 1;
+  padding-right: 32px;
+}
+.pw-row .icon-btn {
+  position: absolute;
+  right: 4px;
 }
 .login-example {
   padding: 7px 10px;
@@ -3440,4 +3450,250 @@ body.tab-dragging * {
 .tp-empty {
   padding: 0 10px 8px;
   color: var(--muted);
+}
+/* ---------- Connections (SSH + Remote Desktop in one list) ---------- */
+.mini-badge.kind {
+  font-weight: 650;
+  letter-spacing: 0.3px;
+}
+.mini-badge.kind.ssh {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.mini-badge.kind.rdp {
+  color: #bb9af7;
+  background: rgba(187, 154, 247, 0.14);
+}
+.row-title .mini-badge.kind {
+  opacity: 0.85;
+}
+
+/* Machine dialog: "More options" fold and notes under the login choice */
+.more-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.more-toggle:hover {
+  color: var(--text);
+}
+.more-toggle svg {
+  transition: transform 0.12s;
+}
+.more-toggle.open svg {
+  transform: rotate(90deg);
+}
+.form-note {
+  margin: -2px 0 0;
+}
+
+/* ---------- Remote Desktop settings: section list + fixed-size page ---------- */
+.rs {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 18px;
+  /* Fixed: switching sections never resizes the dialog; long pages scroll inside. */
+  height: min(540px, calc(100vh - 190px));
+}
+.rs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 14px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.rs-nav button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rs-nav button svg {
+  flex: none;
+  margin-top: 1px;
+}
+.rs-nav button:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.rs-nav button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.rs-nav button > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.rs-nav-title {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.rs-nav-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+.rs-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 2px 6px 12px 0;
+  overflow-y: auto;
+}
+.rs-lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rs-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rs-group-title {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.rs-group-body {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+.rs-group-body > * + * {
+  border-top: 1px solid var(--border);
+}
+.rs-group-body > .error-box,
+.rs-group-body > .ok-box {
+  margin: 10px 12px;
+  border-top: 0;
+}
+.rs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  align-items: center;
+  gap: 16px;
+  min-height: 48px;
+  padding: 9px 12px;
+}
+.rs-row.wide {
+  grid-template-columns: 140px minmax(0, 1fr);
+}
+.rs-row-title {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.rs-row-hint {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.rs-row-ctl {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.rs-row-ctl > .input,
+.rs-row-ctl > .pw-row,
+.rs-row-ctl > .rs-inline {
+  width: 100%;
+}
+.rs-row-ctl > .input.rs-num {
+  width: 110px;
+}
+.rs-row-ctl .switch {
+  margin-right: 0;
+}
+.rs-inline {
+  display: flex;
+  gap: 6px;
+}
+.rs-inline .input {
+  flex: 1;
+  min-width: 0;
+}
+.rs-inline .input.rs-port {
+  flex: none;
+  width: 76px;
+}
+.rs-example {
+  display: inline-block;
+  margin-top: 3px;
+  color: var(--ok);
+  font-size: 11px;
+  word-break: break-all;
+  user-select: text;
+}
+.rs-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.rs-badge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.rs-badge.on {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+.rs-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px 12px;
+}
+@media (max-width: 720px) {
+  .rs {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .rs-nav {
+    flex-direction: row;
+    padding: 0 0 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+  }
+  .rs-nav-sub {
+    display: none;
+  }
+  .rs-row {
+    grid-template-columns: 1fr;
+  }
 }
