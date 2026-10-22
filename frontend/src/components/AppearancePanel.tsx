@@ -173,7 +173,13 @@ export function AppearancePanel(props: {
                         try {
                           const info = await api.checkUpdate();
                           if (info.available) props.onUpdate?.(info);
-                          setUpdateMsg(info.available ? `Remterm ${info.latest} is available.` : `You have the latest version (${info.latest || info.current}).`);
+                          setUpdateMsg(
+                            info.available
+                              ? `Remterm ${info.latest} is available.`
+                              : info.newer
+                                ? `Remterm ${info.latest} is out, but its installer for this system is not ready yet. Try again in a few minutes.`
+                                : `You have the latest version (${info.current}).`,
+                          );
                         } catch (e) {
                           setUpdateMsg(errorMessage(e));
                         }

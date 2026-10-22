@@ -28,6 +28,7 @@ type UpdateInfo struct {
 	Current   string `json:"current"`
 	Latest    string `json:"latest"`
 	Available bool   `json:"available"`
+	Newer     bool   `json:"newer"` // a newer release exists, even if its file for this system is not attached yet
 	Notes     string `json:"notes"`
 	Page      string `json:"page"`  // release page
 	Asset     string `json:"asset"` // file for this system
@@ -74,7 +75,8 @@ func (a *App) CheckUpdate() (UpdateInfo, error) {
 			info.Asset, info.URL, info.Size = as.Name, as.URL, as.Size
 		}
 	}
-	info.Available = info.URL != "" && appVersion != "dev" && newerVersion(info.Latest, appVersion)
+	info.Newer = appVersion != "dev" && newerVersion(info.Latest, appVersion)
+	info.Available = info.URL != "" && info.Newer
 	return info, nil
 }
 

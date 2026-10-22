@@ -36,6 +36,7 @@ export interface UpdateInfo {
   current: string;
   latest: string;
   available: boolean;
+  newer?: boolean; // a newer release exists, even if its file for this system is not attached yet
   notes: string;
   page: string;
   asset: string;
