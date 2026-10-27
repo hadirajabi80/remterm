@@ -32,7 +32,7 @@ internal static class Diag
                 if (new FileInfo(LogPath).Length > 512 * 1024) // keep the log small
                 {
                     var tail = File.ReadAllLines(LogPath);
-                    File.WriteAllLines(LogPath, tail[^2000..]);
+                    File.WriteAllLines(LogPath, tail.Length > 2000 ? tail[^2000..] : tail[(tail.Length / 2)..]);
                 }
             }
             Debug.WriteLine(message);

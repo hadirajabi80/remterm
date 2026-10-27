@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // CmdEntry is one command as run on one target. HostKey is "ssh:<hostId>",
@@ -24,12 +25,14 @@ type CmdEntry struct {
 const maxHistory = 5000
 
 // Commands that look like they carry credentials are never stored. A
-// leading space is the shell convention for "don't record this".
-var secretRe = regexp.MustCompile(`(?i)(pass(word|wd)?|secret|token|api[_-]?key)\s*[=:]\s*\S|--?(password|passwd|token|secret)[=\s]\S`)
+// leading space is the shell convention for "don't record this". Keep the
+// pattern identical to SECRET_RE in frontend/src/history.ts.
+var secretRe = regexp.MustCompile(`(?i)` +
+	`\w*(pass(word|wd|phrase)?|secret|token|api[_-]?key)\w*\s*[=:]\s*\S|(^|\s)--?(password|passwd|passphrase|token|secret|api[-_]?key)[=\s]\S|\b(authorization|bearer)\s*:?\s+\S|\b(mysql|mysqldump|mariadb|sshpass)\b.*\s-p\S*|\bdocker\s+login\b.*\s-p\s*\S|(^|\s)-u\s+[^\s:]+:\S|://[^/\s:@]+:[^@\s/]+@|\bhtpasswd\b.*\s-b\b`)
 
 func recordable(cmd string) bool {
 	t := strings.TrimSpace(cmd)
-	return t != "" && len(t) <= 2000 && !strings.HasPrefix(cmd, " ") && !secretRe.MatchString(t)
+	return t != "" && utf8.RuneCountInString(t) <= 2000 && !strings.HasPrefix(cmd, " ") && !secretRe.MatchString(t)
 }
 
 // cmdHistory lives in its own file (history.json) because it changes on

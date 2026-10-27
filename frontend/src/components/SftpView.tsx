@@ -20,6 +20,8 @@ export function SftpView(props: {
   useSyncExternalStore(transfers.subscribe, transfers.getVersion);
   const list = transfers.list();
   const running = list.filter((t) => t.state === 'running');
+  // Every running transfer, then the 6 most recent finished ones.
+  const shownList = [...running, ...list.filter((t) => t.state !== 'running').slice(0, 6)];
 
   return (
     <div className="sftp-view">
@@ -37,7 +39,7 @@ export function SftpView(props: {
               Clear finished
             </button>
           </div>
-          {list.slice(0, 6).map((t) => {
+          {shownList.map((t) => {
             const pct = t.bytesTotal ? Math.round((t.bytesDone / t.bytesTotal) * 100) : t.state === 'done' ? 100 : 0;
             return (
               <div key={t.id} className={`transfer ${t.state}`}>

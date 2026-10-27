@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -35,24 +36,38 @@ func parseSSHConfig(path string) ([]*sshConfigEntry, error) {
 	}
 	defer f.Close()
 
+	// Wildcard blocks ("Host *", "Host *.prod !db*") are defaults, not hosts.
+	type patternBlock struct {
+		patterns []string
+		e        *sshConfigEntry
+	}
 	var entries, current []*sshConfigEntry
+	var blocks []patternBlock
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := strings.TrimSpace(stripComment(sc.Text()))
+		if line == "" {
 			continue
 		}
 		key, val := splitConfigLine(line)
 		switch key {
 		case "host":
 			current = nil
-			for _, pattern := range strings.Fields(val) {
+			patterns := strings.Fields(val)
+			wild := false
+			for _, pattern := range patterns {
 				if strings.ContainsAny(pattern, "*?!") {
-					continue // wildcard blocks are defaults, not hosts
+					wild = true
+					continue
 				}
 				e := &sshConfigEntry{Alias: pattern}
 				entries = append(entries, e)
 				current = append(current, e)
+			}
+			if wild {
+				b := patternBlock{patterns, &sshConfigEntry{}}
+				blocks = append(blocks, b)
+				current = append(current, b.e)
 			}
 		case "match":
 			current = nil
@@ -62,7 +77,51 @@ func parseSSHConfig(path string) ([]*sshConfigEntry, error) {
 			}
 		}
 	}
+	for _, e := range entries {
+		for _, b := range blocks {
+			if !hostMatches(b.patterns, e.Alias) {
+				continue
+			}
+			for key, val := range map[string]string{"hostname": b.e.HostName, "user": b.e.User, "port": b.e.Port,
+				"identityfile": b.e.IdentityFile, "proxyjump": b.e.ProxyJump} {
+				if val != "" {
+					e.set(key, val)
+				}
+			}
+		}
+	}
 	return entries, sc.Err()
+}
+
+// hostMatches reports whether alias matches a Host line: some pattern
+// matches it and no negated ("!") pattern does.
+func hostMatches(patterns []string, alias string) bool {
+	ok := false
+	for _, p := range patterns {
+		if neg := strings.HasPrefix(p, "!"); neg {
+			if m, _ := path.Match(p[1:], alias); m {
+				return false
+			}
+		} else if m, _ := path.Match(p, alias); m {
+			ok = true
+		}
+	}
+	return ok
+}
+
+// stripComment cuts a trailing comment: a '#' at the start of the line or
+// after a space or tab, outside double quotes.
+func stripComment(line string) string {
+	quoted := false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case c == '"':
+			quoted = !quoted
+		case c == '#' && !quoted && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return line[:i]
+		}
+	}
+	return line
 }
 
 func splitConfigLine(line string) (string, string) {
@@ -126,7 +185,7 @@ func (a *App) ImportSSHConfig() (int, error) {
 
 	for i, p := range added {
 		h := p.host
-		if j := firstJump(p.jump); j != "" {
+		if j := lastJump(p.jump); j != "" && byName[strings.ToLower(j)] != h.ID {
 			h.JumpHostID = byName[strings.ToLower(j)]
 		}
 		if err := a.store.PutHost(h); err != nil {
@@ -136,10 +195,12 @@ func (a *App) ImportSSHConfig() (int, error) {
 	return len(added), nil
 }
 
-// firstJump extracts the first hop's host from a ProxyJump value such as
-// "bastion" or "admin@bastion:2222,next".
-func firstJump(v string) string {
-	v = strings.TrimSpace(strings.SplitN(v, ",", 2)[0])
+// lastJump extracts the hop next to the target from a ProxyJump value such
+// as "bastion" or "outer,admin@bastion:2222" (OpenSSH goes through them in
+// order, so the last one connects to the target).
+func lastJump(v string) string {
+	hops := strings.Split(v, ",")
+	v = strings.TrimSpace(hops[len(hops)-1])
 	if strings.EqualFold(v, "none") {
 		return ""
 	}

@@ -95,6 +95,9 @@ export function TunnelsPanel({ ctx }: { ctx: SidebarCtx }) {
           const st = ctx.tunnelStatus[t.id]?.state ?? 'stopped';
           const err = ctx.tunnelStatus[t.id]?.error;
           const on = st === 'running' || st === 'starting';
+          const bind = t.bindAddress || '127.0.0.1';
+          const listen = bind.includes(':') ? `[${bind}]:${t.port}` : `${bind}:${t.port}`;
+          const exposed = !['127.0.0.1', 'localhost', '::1'].includes(bind);
           return (
             <div key={t.id} className="row tunnel-row" tabIndex={0} onDoubleClick={() => ctx.toggleTunnel(t)} title={err || 'Double-click to start/stop'}>
               <span className={`sdot ${st === 'running' ? 'connected' : st === 'starting' ? 'connecting' : st === 'error' ? 'disconnected' : ''}`} />
@@ -103,9 +106,14 @@ export function TunnelsPanel({ ctx }: { ctx: SidebarCtx }) {
                   {t.label}
                   <span className="mini-badge proto">{t.type === 'dynamic' ? 'SOCKS' : t.type.toUpperCase()}</span>
                   {t.autoStart && <span className="mini-badge dev">AUTO</span>}
+                  {exposed && (
+                    <span className="mini-badge prod" title={`Listens on ${bind}: reachable from other machines`}>
+                      EXPOSED
+                    </span>
+                  )}
                 </div>
                 <div className="row-sub">
-                  {t.type === 'remote' ? `server:${t.port} → ${t.destHost}:${t.destPort}` : t.type === 'dynamic' ? `socks5://127.0.0.1:${t.port}` : `localhost:${t.port} → ${t.destHost}:${t.destPort}`} via{' '}
+                  {t.type === 'remote' ? `server ${listen} → ${t.destHost}:${t.destPort}` : t.type === 'dynamic' ? `socks5://${listen}` : `${listen} → ${t.destHost}:${t.destPort}`} via{' '}
                   {hostName(t.hostId)}
                 </div>
                 {st === 'error' && err && <div className="row-sub err">{err}</div>}
@@ -184,6 +192,7 @@ export function LogsPanel({ ctx }: { ctx: SidebarCtx }) {
   const [query, setQuery] = useState('');
   const [onlyStarred, setOnlyStarred] = useState(false);
   const [comment, setComment] = useState<LogEntry | null>(null);
+  const [deleting, setDeleting] = useState<LogEntry | null>(null);
   const reload = useCallback(() => api.listLogs().then(setLogs).catch(() => {}), []);
   useEffect(() => {
     void reload();
@@ -202,7 +211,7 @@ export function LogsPanel({ ctx }: { ctx: SidebarCtx }) {
         {shown.length === 0 && (
           <div className="side-empty">
             <p>{logs.length ? 'No matching logs.' : 'No session logs yet.'}</p>
-            <p className="hint">Each terminal session is recorded (the last 5 per server). Bookmark one to keep it. Passwords typed at hidden prompts are never recorded.</p>
+            <p className="hint">Each terminal session is recorded (the last 5 per server). Bookmark one to keep it. Everything shown on screen is recorded (typed input at hidden prompts is not).</p>
           </div>
         )}
         {shown.map((l) => (
@@ -224,7 +233,14 @@ export function LogsPanel({ ctx }: { ctx: SidebarCtx }) {
               <button
                 className={`icon-btn sm ${l.bookmarked ? 'on warn' : ''}`}
                 title={l.bookmarked ? 'Remove bookmark' : 'Bookmark (keep forever)'}
-                onClick={() => (l.bookmarked ? api.setLogBookmark(l.id, false, '').then(reload) : setComment(l))}
+                onClick={() =>
+                  l.bookmarked
+                    ? api
+                        .setLogBookmark(l.id, false, '')
+                        .then(reload)
+                        .catch((e) => ctx.notify(errorMessage(e), 'error'))
+                    : setComment(l)
+                }
               >
                 <Icon name="star" size={13} />
               </button>
@@ -240,7 +256,7 @@ export function LogsPanel({ ctx }: { ctx: SidebarCtx }) {
               >
                 <Icon name="import" size={13} />
               </button>
-              <button className="icon-btn sm danger" title="Delete" onClick={() => api.deleteLog(l.id).then(reload)}>
+              <button className="icon-btn sm danger" title="Delete" onClick={() => setDeleting(l)}>
                 <Icon name="trash" size={13} />
               </button>
             </div>
@@ -258,6 +274,23 @@ export function LogsPanel({ ctx }: { ctx: SidebarCtx }) {
             await api.setLogBookmark(comment.id, true, text);
             setComment(null);
             void reload();
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="Delete session log"
+          message={`Delete the log of ${deleting.title}?${deleting.bookmarked ? ' It is ★ bookmarked' + (deleting.comment ? ` ("${deleting.comment}")` : '') + '.' : ''} This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            const id = deleting.id;
+            setDeleting(null);
+            api
+              .deleteLog(id)
+              .then(reload)
+              .catch((e) => ctx.notify(errorMessage(e), 'error'));
           }}
         />
       )}
@@ -318,8 +351,14 @@ export function KnownHostsPanel({ ctx }: { ctx: SidebarCtx }) {
           danger
           onCancel={() => setRemove(null)}
           onConfirm={async () => {
-            await api.removeKnownHost(remove.line).catch((e) => ctx.notify(errorMessage(e), 'error'));
+            // Clear first: a second Enter/click must not reuse a line number that may now be another server's.
+            const k = remove;
             setRemove(null);
+            try {
+              await api.removeKnownHost(k.line);
+            } catch (e) {
+              ctx.notify(errorMessage(e), 'error');
+            }
             void reload();
           }}
         />

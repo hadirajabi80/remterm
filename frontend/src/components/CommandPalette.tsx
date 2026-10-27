@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { RDP_HOST_RE, useCover } from '../rdp';
 import { looksLikeSpec, matches } from '../util';
 import { Icon } from './Icon';
+import { useOverlayEscape } from './Modal';
 
 export interface PaletteItem {
   id: string;
@@ -24,6 +25,7 @@ export function CommandPalette(props: {
   onClose(): void;
 }) {
   useCover();
+  useOverlayEscape(props.onClose);
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -31,7 +33,13 @@ export function CommandPalette(props: {
   const results = useMemo(() => {
     const list = props.items.filter((it) => matches(query, it.kind, it.label, it.detail, it.keywords));
     const q = query.trim();
-    if (props.onQuickRdp && RDP_HOST_RE.test(q) && !list.some((it) => it.kind === 'Remote' && it.detail?.includes(q))) {
+    // A saved machine with exactly this address (port optional) replaces the direct RDP item.
+    const qh = q.replace(/:\d+$/, '');
+    const saved = list.some((it) => {
+      const addr = it.kind === 'Remote' ? it.detail?.split(' · ')[0] : undefined;
+      return addr === q || addr?.replace(/:\d+$/, '') === qh;
+    });
+    if (props.onQuickRdp && RDP_HOST_RE.test(q) && !saved) {
       list.push({ id: 'quick-rdp', kind: 'Remote', label: `Remote Desktop to ${q}`, detail: 'direct RDP', run: (o) => props.onQuickRdp!(q, !!o?.split) });
     }
     if (looksLikeSpec(query)) {
@@ -40,10 +48,9 @@ export function CommandPalette(props: {
         id: 'quick',
         kind: 'Connect',
         label: `Quick connect to ${spec}`,
-        detail: 'Enter',
         run: (o) => props.onQuickConnect(spec, !!o?.split),
       };
-      return query.includes('@') || list.length === 0 ? [quick, ...list] : [...list, quick];
+      return [quick, ...list];
     }
     return list;
   }, [props, query]);
@@ -61,7 +68,27 @@ export function CommandPalette(props: {
 
   return (
     <div className="overlay palette-overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
-      <div className="palette" role="dialog" aria-label="Command palette">
+      <div
+        className="palette"
+        role="dialog"
+        aria-label="Command palette"
+        // Clicks on the list/footer keep the focus (and the keys) in the input.
+        onMouseDown={(e) => {
+          if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSel((s) => Math.min(s + 1, results.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSel((s) => Math.max(s - 1, 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            run(results[sel], e.shiftKey);
+          }
+        }}
+      >
         <div className="palette-input">
           <Icon name="search" />
           <input
@@ -69,41 +96,29 @@ export function CommandPalette(props: {
             placeholder="Search hosts, machines, snippets, actions — or type user@host / an IP to connect"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                setSel((s) => Math.min(s + 1, results.length - 1));
-              } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                setSel((s) => Math.max(s - 1, 0));
-              } else if (e.key === 'Enter') {
-                e.preventDefault();
-                run(results[sel], e.shiftKey);
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                props.onClose();
-              }
-            }}
           />
         </div>
         <div className="palette-list" ref={listRef}>
           {results.length === 0 && <div className="palette-empty">No matches</div>}
-          {results.map((it, i) => (
-            <div
-              key={it.id}
-              className={`pitem ${i === sel ? 'sel' : ''}`}
-              onMouseMove={() => setSel(i)}
-              onClick={(e) => run(it, e.shiftKey)}
-            >
-              <span className={`pitem-ico ${it.env ? 'env-' + it.env : ''}`}>
-                <Icon name={KIND_ICON[it.kind]} size={14} />
-              </span>
-              <span className="pkind">{it.kind}</span>
-              <span className="plabel">{it.label}</span>
-              {it.detail && <span className="pdetail">{it.detail}</span>}
-            </div>
-          ))}
+          {results.map((it, i) => {
+            // The quick-connect item says "Enter" only while Enter would run it.
+            const detail = it.id === 'quick' ? (i === sel ? 'Enter' : undefined) : it.detail;
+            return (
+              <div
+                key={it.id}
+                className={`pitem ${i === sel ? 'sel' : ''}`}
+                onMouseMove={() => setSel(i)}
+                onClick={(e) => run(it, e.shiftKey)}
+              >
+                <span className={`pitem-ico ${it.env ? 'env-' + it.env : ''}`}>
+                  <Icon name={KIND_ICON[it.kind]} size={14} />
+                </span>
+                <span className="pkind">{it.kind}</span>
+                <span className="plabel">{it.label}</span>
+                {detail && <span className="pdetail">{detail}</span>}
+              </div>
+            );
+          })}
         </div>
         <div className="palette-foot">
           <span>

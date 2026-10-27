@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Text;
@@ -200,12 +201,16 @@ internal sealed class EngineHost : ApplicationContext
             if (!Vault.Exists) { var (v, d) = Vault.CreateNew(); Attach(new Store(v, d)); }
             else if (!Vault.FileNeedsMasterPassword()) { var (v, d) = Vault.Open(null); Attach(new Store(v, d)); }
             // else: wait for "unlock" with the master password
+            _openError = null;
         }
         catch (Exception ex)
         {
+            _openError = ex.Message;
             Diag.Log("open vault: " + ex.Message);
         }
     }
+
+    private string? _openError; // why the vault could not be opened at start (other Windows account, damaged file)
 
     private void Attach(Store store)
     {
@@ -222,14 +227,24 @@ internal sealed class EngineHost : ApplicationContext
         hasMaster = _store?.Vault.HasMasterPassword ?? Vault.Exists,
         vaultPath = Vault.FilePath,
         autoLockMinutes = _store?.Data.Settings.AutoLockMinutes ?? 0,
+        openError = _openError,
     };
 
     private object Unlock(string password)
     {
         if (_store == null)
         {
-            try { var (v, d) = Vault.Open(password); Attach(new Store(v, d)); }
-            catch (CryptographicException) { throw new InvalidOperationException("Wrong master password."); }
+            try { var (v, d) = Vault.Open(password); Attach(new Store(v, d)); _openError = null; }
+            catch (CryptographicException ex)
+            {
+                // DPAPI refusing the key (another Windows account) or a vault with no master password to be
+                // wrong about: the file can't be opened here, whatever password is typed.
+                bool damaged;
+                try { damaged = ex.InnerException is Win32Exception || ex.Message.StartsWith("DPAPI") || !Vault.FileNeedsMasterPassword(); }
+                catch { damaged = true; }
+                if (damaged) throw new InvalidOperationException($"The vault can't be opened under this Windows account or is damaged ({Vault.FilePath}).");
+                throw new InvalidOperationException("Wrong master password.");
+            }
         }
         else if (!_store.Vault.VerifyMasterPassword(password))
         {

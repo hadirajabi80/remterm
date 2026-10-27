@@ -26,6 +26,7 @@ public sealed class Vault
     private byte[] _dataKey;
     private byte[]? _masterSalt;
     private byte[]? _masterHash; // PBKDF2 output, used to verify unlock attempts while running
+    private int _iterations = Iterations; // PBKDF2 rounds of the master password as stored
 
     public bool HasMasterPassword => _masterSalt != null;
 
@@ -77,13 +78,13 @@ public sealed class Vault
         var plain = AesOpen(dataKey, Convert.FromBase64String(env.Data));
         var data = JsonSerializer.Deserialize<AppData>(plain) ?? new AppData();
         CryptographicOperations.ZeroMemory(plain);
-        return (new Vault(dataKey, salt, hash), data);
+        return (new Vault(dataKey, salt, hash) { _iterations = env.Iterations }, data);
     }
 
     public bool VerifyMasterPassword(string password)
     {
         if (_masterSalt == null || _masterHash == null) return true;
-        var h = Derive(password, _masterSalt, Iterations);
+        var h = Derive(password, _masterSalt, _iterations);
         return CryptographicOperations.FixedTimeEquals(h, _masterHash);
     }
 
@@ -100,7 +101,12 @@ public sealed class Vault
             _masterSalt = RandomNumberGenerator.GetBytes(16);
             _masterHash = Derive(password, _masterSalt, Iterations);
         }
+        _iterations = Iterations;
+        // A new data key, or the previous file (and its .bak) would still open the data under the old
+        // protection. The .bak itself is such a file: remove it.
+        _dataKey = RandomNumberGenerator.GetBytes(32);
         Save(data);
+        try { File.Delete(FilePath + ".bak"); } catch { /* best effort */ }
     }
 
     public void Save(AppData data)
@@ -116,7 +122,7 @@ public sealed class Vault
             V = 1,
             Master = _masterHash != null,
             Salt = _masterSalt != null ? Convert.ToBase64String(_masterSalt) : null,
-            Iterations = Iterations,
+            Iterations = _iterations,
             WrappedKey = Convert.ToBase64String(Dpapi.Protect(keyBlob)),
             Data = Convert.ToBase64String(sealedData),
         };

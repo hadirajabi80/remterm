@@ -120,9 +120,17 @@ func main() {
 	if run {
 		time.Sleep(1500 * time.Millisecond) // let the updating Remterm quit
 	}
-	wasRunning, err := install(dir)
+	wasRunning, warnings, err := install(dir)
 	if err != nil {
-		if !silent {
+		if run { // Remterm's updater already quit: say so and bring Remterm back
+			msg("Update failed:\n\n"+err.Error(), windows.MB_ICONERROR)
+			exe := filepath.Join(dir, "Remterm.exe")
+			if _, serr := os.Stat(exe); serr == nil {
+				cmd := exec.Command(exe)
+				cmd.Dir = dir
+				_ = cmd.Start()
+			}
+		} else if !silent {
 			msg("Installation failed:\n\n"+err.Error(), windows.MB_ICONERROR)
 		}
 		os.Exit(1)
@@ -158,6 +166,9 @@ func main() {
 	} else if win11 {
 		done += "\n\nTo open a terminal from Explorer: right-click a folder → Show more options → Open in Remterm."
 	}
+	if len(warnings) > 0 {
+		done += "\n\nSome steps did not work:\n• " + strings.Join(warnings, "\n• ")
+	}
 	res, err := taskDialog(dialog{
 		instruction: "Remterm is ready",
 		content:     done,
@@ -173,15 +184,16 @@ func main() {
 
 // install copies the programs and registers them. It reports whether an
 // older copy was running (its file is renamed aside, which Windows allows).
-func install(dir string) (wasRunning bool, err error) {
+// Only copying the programs is fatal; the other steps come back as warnings.
+func install(dir string) (wasRunning bool, warnings []string, err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return false, err
+		return false, nil, err
 	}
 	total := 0
 	for _, name := range programs {
 		n, running, err := extract(name, dir)
 		if err != nil {
-			return wasRunning, err
+			return wasRunning, nil, err
 		}
 		total += n
 		wasRunning = wasRunning || running
@@ -191,20 +203,20 @@ func install(dir string) (wasRunning bool, err error) {
 	for _, id := range []*windows.KNOWNFOLDERID{windows.FOLDERID_Programs, windows.FOLDERID_Desktop} {
 		if folder, err := windows.KnownFolderPath(id, 0); err == nil {
 			if err := createShortcut(filepath.Join(folder, "Remterm.lnk"), exe, dir); err != nil {
-				return wasRunning, fmt.Errorf("create shortcut: %w", err)
+				warnings = append(warnings, "create shortcut: "+err.Error())
 			}
 		}
 	}
 
 	if err := registerUninstall(exe, dir, total); err != nil {
-		return wasRunning, fmt.Errorf("register in Apps & features: %w", err)
+		warnings = append(warnings, "register in Apps & features: "+err.Error())
 	}
 
 	// The app owns the Explorer menu entries (it can also toggle them in its settings).
 	if err := hiddenCommand(exe, "--install-context-menu").Run(); err != nil {
-		return wasRunning, fmt.Errorf("add Explorer menu: %w", err)
+		warnings = append(warnings, "add Explorer menu: "+err.Error())
 	}
-	return wasRunning, nil
+	return wasRunning, warnings, nil
 }
 
 // extract unpacks payload/<name>.gz into dir.

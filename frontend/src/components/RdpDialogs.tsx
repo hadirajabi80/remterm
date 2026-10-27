@@ -440,7 +440,12 @@ export function LoginsDialog(props: { data: RdpData; onChanged(): void; onClose(
       setConfirmDelete(true);
       return;
     }
-    await rdp.deleteCredential(current.id).catch((e) => setError(errorMessage(e)));
+    try {
+      await rdp.deleteCredential(current.id);
+    } catch (e) {
+      setError(errorMessage(e));
+      return;
+    }
     setSelId(null);
     props.onChanged();
   };
@@ -842,6 +847,12 @@ function SecurityTab(props: {
       setMsg({ text: errorMessage(e), error: true });
     }
   };
+  // Enter sets the password; it must not submit (save and close) the settings form.
+  const applyOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (next) void apply(false);
+  };
 
   return (
     <>
@@ -857,14 +868,14 @@ function SecurityTab(props: {
         {msg && <div className={msg.error ? 'error-box' : 'ok-box'}>{msg.text}</div>}
         {has && (
           <SettingRow title="Current password">
-            <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            <input className="input" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} onKeyDown={applyOnEnter} />
           </SettingRow>
         )}
         <SettingRow title={has ? 'New password' : 'Password'} hint="At least 6 characters">
-          <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+          <input className="input" type="password" value={next} onChange={(e) => setNext(e.target.value)} onKeyDown={applyOnEnter} />
         </SettingRow>
         <SettingRow title="Repeat">
-          <input className="input" type="password" value={again} onChange={(e) => setAgain(e.target.value)} />
+          <input className="input" type="password" value={again} onChange={(e) => setAgain(e.target.value)} onKeyDown={applyOnEnter} />
         </SettingRow>
         <div className="rs-actions">
           {has && (

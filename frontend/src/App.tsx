@@ -78,6 +78,7 @@ const rdpLoginKey = (t: RdpTarget) => (t.adhoc ? 'ip:' + t.adhoc.ip.toLowerCase(
 const rdpErrorText = (msg: string) => msg.replace(/^(BASTION|LOCKED|NO_RDP_CLIENT):\s*/, '');
 
 interface AuthRequest {
+  id: number;
   kind: AuthKind;
   target: string;
   error: string;
@@ -152,7 +153,9 @@ export default function App() {
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
-  const [auth, setAuth] = useState<AuthRequest | null>(null);
+  // Password/passphrase prompts wait their turn: several panes can ask at once.
+  const [authQueue, setAuthQueue] = useState<AuthRequest[]>([]);
+  const authSeq = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [varsRequest, setVarsRequest] = useState<{ snippet: Snippet; execute: boolean; hostIds?: string[] } | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -210,7 +213,7 @@ export default function App() {
     editingSnippet !== undefined ||
     confirm ||
     prompt ||
-    auth ||
+    authQueue.length > 0 ||
     paletteOpen ||
     varsRequest ||
     historyList ||
@@ -344,13 +347,19 @@ export default function App() {
 
   useEffect(() => {
     sessions.current.forEach((s) => s.setOptions(optionsFor(s.currentTarget, appearance)));
-    document.documentElement.style.setProperty('--term-bg', getScheme(appearance.scheme).theme.background);
+    const theme = getScheme(appearance.scheme).theme;
+    document.documentElement.style.setProperty('--term-bg', theme.background);
+    document.documentElement.style.setProperty('--term-fg', theme.foreground ?? '#c9d4e6');
+  }, [appearance, hosts, groups, optionsFor]);
+
+  // Saved separately so a hosts/groups refresh does not rewrite the settings file.
+  useEffect(() => {
     if (!settingsLoaded) return;
     const t = window.setTimeout(() => {
       api.saveSettings(JSON.stringify({ appearance, typing })).catch((e) => notify(errorMessage(e), 'error'));
     }, 400);
     return () => window.clearTimeout(t);
-  }, [appearance, typing, settingsLoaded, notify, optionsFor, hosts, groups]);
+  }, [appearance, typing, settingsLoaded, notify]);
 
   // App theme: dark, light or following the system.
   useEffect(() => {
@@ -391,7 +400,9 @@ export default function App() {
   /** Ask for a password/passphrase; resolves null when cancelled. */
   const askAuth = useCallback(
     (target: string, error: string, kind: AuthKind = 'password') =>
-      new Promise<{ password: string; save: boolean } | null>((resolve) => setAuth({ kind, target, error, canSave: true, resolve })),
+      new Promise<{ password: string; save: boolean } | null>((resolve) =>
+        setAuthQueue((q) => [...q, { id: ++authSeq.current, kind, target, error, canSave: true, resolve }]),
+      ),
     [],
   );
 
@@ -545,6 +556,10 @@ export default function App() {
       return;
     }
     const from = tab.activePane;
+    if (!target && (sessions.current.get(from)?.currentTarget ?? panes[from]?.target)?.kind === 'rdp') {
+      notify('Open another Remote Desktop session from the sidebar instead');
+      return;
+    }
     const t = target ?? sessions.current.get(from)?.currentTarget ?? panes[from]?.target;
     if (!t) return;
     let d = dir;
@@ -570,36 +585,42 @@ export default function App() {
     });
   };
 
+  // Both close helpers read tabsRef (updated at once) and write with functional updates, so a
+  // second close in the same tick cannot bring back, or dispose again, what the first removed.
   const closeTab = (tabKey: string) => {
-    const prev = tabsRef.current;
-    const tab = prev.find((t) => t.key === tabKey);
-    if (!tab) return;
-    disposePanes(leaves(tab.layout));
-    const idx = prev.indexOf(tab);
-    const next = prev.filter((t) => t !== tab);
-    setTabs(next);
+    const cur = tabsRef.current;
+    const idx = cur.findIndex((t) => t.key === tabKey);
+    if (idx < 0) return;
+    disposePanes(leaves(cur[idx].layout));
+    const next = cur.filter((_, i) => i !== idx);
+    tabsRef.current = next;
+    setTabs((prev) => prev.filter((t) => t.key !== tabKey));
     setActiveKey((a) => (a === tabKey ? (next[Math.min(idx, next.length - 1)]?.key ?? null) : a));
     setFindOpen(false);
+  };
+
+  /** The tab without one of its panes; null when it was the last one. */
+  const dropPane = (t: Tab, paneKey: string): Tab | null => {
+    const layout = removePane(t.layout, paneKey);
+    if (!layout) return null;
+    const activePane =
+      t.activePane !== paneKey
+        ? t.activePane
+        : (['left', 'up', 'right', 'down'] as Direction[]).map((d) => neighbor(t.layout, paneKey, d)).find(Boolean) ?? leaves(layout)[0];
+    return { ...t, layout, activePane: activePane!, zoomed: false, broadcast: t.broadcast && leaves(layout).length > 1 };
   };
 
   const closePane = (paneKey: string) => {
     const tab = tabOf(paneKey);
     if (!tab) return;
-    const layout = removePane(tab.layout, paneKey);
-    if (!layout) {
+    const next = dropPane(tab, paneKey);
+    if (!next) {
       closeTab(tab.key);
       return;
     }
-    const nextActive =
-      tab.activePane !== paneKey
-        ? tab.activePane
-        : (['left', 'up', 'right', 'down'] as Direction[]).map((d) => neighbor(tab.layout, paneKey, d)).find(Boolean) ?? leaves(layout)[0];
     disposePanes([paneKey]);
-    setTabs((prev) =>
-      prev.map((t) =>
-        t.key === tab.key ? { ...t, layout, activePane: nextActive!, zoomed: false, broadcast: t.broadcast && leaves(layout).length > 1 } : t,
-      ),
-    );
+    tabsRef.current = tabsRef.current.map((t) => (t.key === tab.key ? next : t));
+    setTabs((prev) => prev.map((t) => (t.key === tab.key && leaves(t.layout).includes(paneKey) ? (dropPane(t, paneKey) ?? t) : t)));
     setFindOpen(false);
   };
 
@@ -793,15 +814,17 @@ export default function App() {
         return;
       } catch (e) {
         const msg = errorMessage(e);
-        if (!msg.startsWith('AUTH_FAILED')) {
+        const kind = msg.startsWith('PASSPHRASE_REQUIRED') ? 'passphrase' : msg.startsWith('AUTH_FAILED') ? 'password' : null;
+        if (!kind) {
           notify(cleanError(msg), 'error');
           return;
         }
         const h = hosts.find((x) => x.id === t.hostId);
-        const res = await askAuth(h ? hostLabel(h) : 'SSH host', password ? cleanError(msg) : '');
+        const res = await askAuth(h ? hostLabel(h) : 'SSH host', password ? cleanError(msg) : '', kind);
         if (!res) return;
         password = res.password;
-        if (res.save && h) await api.saveHost(h, res.password).then(refresh).catch(() => {});
+        // A key passphrase is never stored as the host's password.
+        if (res.save && h && kind === 'password') await api.saveHost(h, res.password).then(refresh).catch(() => {});
       }
     }
   };
@@ -869,7 +892,7 @@ export default function App() {
         }
         const paneKey = el?.closest<HTMLElement>('[data-pane-key]')?.dataset.paneKey;
         const s = paneKey ? sessions.current.get(paneKey) : activeSession;
-        if (s) s.send(paths.map((p) => (/\s/.test(p) ? `"${p}"` : p)).join(' '));
+        if (s) s.send(paths.map((p) => (/[\s&|;()<>^'"`$]/.test(p) ? `"${p}"` : p)).join(' '));
       }),
     [activeSession, notify],
   );
@@ -933,8 +956,8 @@ export default function App() {
 
   /** The connect prompt was answered: remember the login on the machine (or as a new one), or use it once. */
   const rdpLoginConnect = async (req: Extract<RdpDialogState, { kind: 'login' }>, r: { username: string; password: string; remember: boolean }) => {
-    setRdpDialog(null);
     if (!r.remember) {
+      setRdpDialog(null);
       rdpLogins.current.set(rdpLoginKey(req.target), { username: r.username, password: r.password });
       connectRdp(req.target, req.split, true);
       return;
@@ -942,6 +965,7 @@ export default function App() {
     try {
       const base = req.machine ?? { ...EMPTY_MACHINE, name: req.host, ip: req.host };
       const saved = await rdp.saveMachine({ ...base, username: r.username, credentialId: null }, r.password);
+      setRdpDialog(null); // only once saved, so a failed save keeps the prompt open
       if (!req.machine) notify(`Saved ${saved.name} to your connections`);
       await refreshRdp();
       connectRdp({ kind: 'rdp', machineId: saved.id }, req.split, true);
@@ -1306,8 +1330,9 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (overlayOpen) return;
       const ctrl = e.ctrlKey || e.metaKey;
+      // With Settings open only its own toggle (Ctrl+,) gets through.
+      if (overlayOpen || (appearanceOpen && !(ctrl && !e.shiftKey && e.key === ','))) return;
       // Keys typed in an in-tab RDP session belong to the remote machine, except Remterm's Ctrl+Alt ones.
       const inRdp = !!(e.target as HTMLElement | null)?.closest?.('.web-rdp');
       if (inRdp && !(ctrl && e.altKey)) return;
@@ -1333,8 +1358,9 @@ export default function App() {
       else if (ctrl && e.shiftKey && k === 'w') activePane && requestClosePane(activePane.key);
       else if (ctrl && e.shiftKey && k === 'f') activeSession && setFindOpen(true);
       else if (ctrl && e.shiftKey && k === 'r') (activeRdp ? rdpAction('reconnect') : activeSession?.reconnect());
-      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && k === 'k') rdpAction('fill');
-      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && e.key === 'Enter') rdpAction('fullscreen');
+      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && !activePane?.rdpWeb && k === 'k') rdpAction('fill');
+      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && !activePane?.rdpWeb && e.key === 'Enter') rdpAction('fullscreen');
+      else if (ctrl && e.altKey && !e.shiftKey && activeRdp && k === 'r') rdpAction('reconnect');
       else if (ctrl && e.altKey && !e.shiftKey && rdpData && k === 'p') setPaletteOpen(true);
       else if (ctrl && e.altKey && !e.shiftKey && rdpData?.hasMaster && k === 'l') void lockRdp();
       else if (ctrl && e.shiftKey && k === 'b') setSidebarOpen((v) => !v);
@@ -1345,7 +1371,7 @@ export default function App() {
       else if (altShift && (e.code === 'Equal' || e.code === 'NumpadAdd')) split('row');
       else if (altShift && (e.code === 'Minus' || e.code === 'NumpadSubtract')) split('col');
       else if (altShift && e.code === 'KeyD') split('auto');
-      else if (e.altKey && !e.shiftKey && !ctrl && e.key.startsWith('Arrow'))
+      else if (e.altKey && !e.shiftKey && !ctrl && e.key.startsWith('Arrow') && activePaneCount > 1)
         movePaneFocus(({ ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' } as const)[e.key as 'ArrowLeft']);
       else if (ctrl && e.key === 'Tab') cycleTab(e.shiftKey ? -1 : 1);
       else if (ctrl && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
@@ -1432,12 +1458,15 @@ export default function App() {
         );
       }
       if (activeRdp) {
-        items.push(
-          { id: 'a:rdp-fill', kind: 'Action', label: 'Fill a saved login in this session', detail: 'Ctrl+Alt+K', run: () => rdpAction('fill') },
-          { id: 'a:rdp-full', kind: 'Action', label: 'Fullscreen Remote Desktop', detail: 'Ctrl+Alt+Enter', run: () => rdpAction('fullscreen') },
-          { id: 'a:rdp-pop', kind: 'Action', label: 'Open session in its own window', run: () => rdpAction('popout') },
-          { id: 'a:rdp-reconnect', kind: 'Action', label: 'Reconnect Remote Desktop', detail: 'Ctrl+Alt+R', run: () => rdpAction('reconnect') },
-        );
+        // Fill, fullscreen and pop-out need the native engine; in-tab (web) sessions have none of them.
+        if (!activePane?.rdpWeb) {
+          items.push(
+            { id: 'a:rdp-fill', kind: 'Action', label: 'Fill a saved login in this session', detail: 'Ctrl+Alt+K', run: () => rdpAction('fill') },
+            { id: 'a:rdp-full', kind: 'Action', label: 'Fullscreen Remote Desktop', detail: 'Ctrl+Alt+Enter', run: () => rdpAction('fullscreen') },
+            { id: 'a:rdp-pop', kind: 'Action', label: 'Open session in its own window', run: () => rdpAction('popout') },
+          );
+        }
+        items.push({ id: 'a:rdp-reconnect', kind: 'Action', label: 'Reconnect Remote Desktop', detail: 'Ctrl+Alt+R', run: () => rdpAction('reconnect') });
       }
       items.push({ id: 'a:close', kind: 'Action', label: 'Close current pane', detail: 'Ctrl+Shift+W', run: () => activePane && requestClosePane(activePane.key) });
     }
@@ -1483,10 +1512,14 @@ export default function App() {
     connect: (h, inSplit) => (inSplit ? split('auto', { kind: 'ssh', hostId: h.id }) : openTab({ kind: 'ssh', hostId: h.id })),
     openSftp: (h) => openTab({ kind: 'sftp', hostId: h.id }),
     editHost: (h, group) => setEditingHost({ host: h, group }),
-    duplicateHost: (h) => setEditingHost({ host: { ...h, id: '', name: `${h.name} (copy)`, hasSecret: false, lastUsed: 0 } }),
+    duplicateHost: (h) =>
+      setEditingHost({
+        host: { ...h, id: '', name: `${h.name} (copy)`, hasSecret: false, lastUsed: 0, proxy: h.proxy ? { ...h.proxy, hasSecret: false } : h.proxy },
+      }),
     deleteHost: askDeleteHost,
     editGroup: openGroupDialog,
     connectGroup: (path) => connectHosts(hostsInGroup(hosts, path)),
+    connectHosts: (list) => connectHosts(list),
     toggleFavorite: (h) =>
       void api
         .saveHost({ ...h, favorite: !h.favorite }, '')
@@ -1940,19 +1973,20 @@ export default function App() {
           }}
         />
       )}
-      {auth && (
+      {authQueue[0] && (
         <AuthDialog
-          kind={auth.kind}
-          target={auth.target}
-          error={auth.error}
-          canSave={auth.canSave}
+          key={authQueue[0].id}
+          kind={authQueue[0].kind}
+          target={authQueue[0].target}
+          error={authQueue[0].error}
+          canSave={authQueue[0].canSave}
           onCancel={() => {
-            auth.resolve(null);
-            setAuth(null);
+            authQueue[0].resolve(null);
+            setAuthQueue((q) => q.slice(1));
           }}
           onSubmit={(password, save) => {
-            auth.resolve({ password, save });
-            setAuth(null);
+            authQueue[0].resolve({ password, save });
+            setAuthQueue((q) => q.slice(1));
           }}
         />
       )}

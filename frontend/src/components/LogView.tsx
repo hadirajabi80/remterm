@@ -11,6 +11,7 @@ import { Icon } from './Icon';
 export function LogView(props: { logId: string; theme: ITheme; fontSize: number; notify(text: string, kind?: 'info' | 'error'): void }) {
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<SearchAddon>();
+  const termRef = useRef<{ term: Terminal; fit: FitAddon }>();
   const [entry, setEntry] = useState<LogEntry | null>(null);
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
@@ -28,6 +29,7 @@ export function LogView(props: { logId: string; theme: ITheme; fontSize: number;
     const fit = new FitAddon();
     const search = new SearchAddon();
     searchRef.current = search;
+    termRef.current = { term, fit };
     term.loadAddon(fit);
     term.loadAddon(search);
     term.open(ref.current!);
@@ -51,10 +53,24 @@ export function LogView(props: { logId: string; theme: ITheme; fontSize: number;
     api.listLogs().then((all) => setEntry(all.find((l) => l.id === props.logId) ?? null));
     return () => {
       ro.disconnect();
+      termRef.current = undefined;
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.logId]);
+
+  // Follow theme/font changes while the log is open.
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t) return;
+    t.term.options.theme = props.theme;
+    t.term.options.fontSize = props.fontSize;
+    try {
+      t.fit.fit();
+    } catch {
+      /* hidden */
+    }
+  }, [props.theme, props.fontSize]);
 
   return (
     <div className="log-view">
@@ -63,7 +79,7 @@ export function LogView(props: { logId: string; theme: ITheme; fontSize: number;
         <b>{entry?.title ?? 'Session log'}</b>
         {entry && (
           <span className="hint">
-            {formatDate(entry.started)} · {formatBytes(entry.size)}
+            {formatDate(entry.started)} · {entry.ended ? formatBytes(entry.size) : 'recording…'}
             {entry.bookmarked ? ' · ★ bookmarked' : ''}
             {entry.comment ? ` — ${entry.comment}` : ''}
           </span>

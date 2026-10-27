@@ -131,6 +131,8 @@ func (a *App) SaveHost(h Host, secret, proxyPassword string) (Host, error) {
 		if h.Proxy != nil && old.Proxy != nil {
 			h.Proxy.HasSecret = old.Proxy.HasSecret
 		}
+	} else if h.Proxy != nil {
+		h.Proxy.HasSecret = false // e.g. a duplicate: the copied flag has no password behind it
 	}
 	h.Tags = normalizeTags(h.Tags)
 	if h.Proxy != nil && strings.TrimSpace(h.Proxy.Host) == "" {
@@ -167,6 +169,7 @@ func (a *App) ClearSecret(id string) error {
 
 func (a *App) DeleteHost(id string) error {
 	deleteSecret(id)
+	deleteNamedSecret("proxy:" + id)
 	return a.store.DeleteHost(id)
 }
 
@@ -196,9 +199,9 @@ func (a *App) SaveSnippet(s Snippet) (Snippet, error) {
 		return Snippet{}, errors.New("command is required")
 	}
 	if s.Name == "" {
-		s.Name = strings.SplitN(s.Command, "\n", 2)[0]
-		if len(s.Name) > 40 {
-			s.Name = s.Name[:40] + "…"
+		s.Name = strings.TrimRight(strings.SplitN(strings.TrimLeft(s.Command, "\r\n "), "\n", 2)[0], "\r")
+		if r := []rune(s.Name); len(r) > 40 {
+			s.Name = string(r[:40]) + "…"
 		}
 	}
 	if s.ID == "" {

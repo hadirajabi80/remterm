@@ -28,6 +28,7 @@ internal sealed class SessionView : UserControl
     private bool _loggedIn;
     private bool _closing;
     private bool _typing;
+    private bool _usLayout; // as connected: the session's keyboard layout is set at connect
     private string? _pendingKeyHash;
     private System.Windows.Forms.Timer? _closeTimeout;
 
@@ -173,6 +174,7 @@ internal sealed class SessionView : UserControl
     public void Connect()
     {
         _retryTimer.Stop();
+        _pendingKeyHash = null;
         _userDisconnect = false;
         _closing = false;
         _loggedIn = false;
@@ -262,7 +264,8 @@ internal sealed class SessionView : UserControl
                 adv.PerformanceFlags = perf;
             }
             adv.GrabFocusOnConnect = true;
-            if (s.ForceUsKeyboard) adv.KeyBoardLayoutStr = "0x00000409";
+            _usLayout = s.ForceUsKeyboard;
+            if (_usLayout) adv.KeyBoardLayoutStr = "0x00000409";
 
             try
             {
@@ -322,6 +325,9 @@ internal sealed class SessionView : UserControl
     private void OnLoginComplete(object? sender, EventArgs e)
     {
         _loggedIn = true;
+        // Signed in to the machine: nothing left to fill, and typing into its desktop would be harmful.
+        // Through a bastion this event belongs to the proxy session, whose own login pages still need filling.
+        if (Machine.Mode == ConnectionMode.Direct) StopAutoType();
         _retries = 0;
         _lastActivity = DateTime.UtcNow;
         _resizeTimer.Stop();
@@ -346,7 +352,7 @@ internal sealed class SessionView : UserControl
         if (_pendingKeyHash != null)
         {
             ShowOverlay("⚠ Server identity changed",
-                $"The public key of {_store.Data.Bastion.Host} is different from the one seen before.\n" +
+                $"The public key of {PinKey()} is different from the one seen before.\n" +
                 "This can mean the server was reinstalled — or that someone is intercepting the connection.\n" +
                 "Connect only if your admins confirm the change.",
                 reconnect: true, trustKey: true);
@@ -378,18 +384,35 @@ internal sealed class SessionView : UserControl
         ShowOverlay($"{Machine.Name} disconnected", detail, reconnect: true);
     }
 
-    private void OnPublicKey(object? sender, PublicKeyEventArgs e)
+    /// <summary>The pinned-key entry for this connection: host:port of the machine (direct) or the bastion.</summary>
+    private string PinKey()
     {
         var b = _store.Data.Bastion;
-        string host = Machine.Mode == ConnectionMode.Direct ? ParseHost(Machine.Ip, 3389).host : $"{b.Host}:{b.Port}";
+        if (Machine.Mode != ConnectionMode.Direct) return $"{b.Host}:{b.Port}";
+        var (h, p) = ParseHost(Machine.Ip, 3389);
+        return $"{h}:{p}";
+    }
+
+    private void OnPublicKey(object? sender, PublicKeyEventArgs e)
+    {
+        string host = PinKey();
+        var keys = _store.Data.PinnedKeys;
+        // Direct machines used to be pinned by host only: move such an entry to host:port.
+        if (Machine.Mode == ConnectionMode.Direct && !keys.ContainsKey(host) &&
+            keys.Remove(ParseHost(Machine.Ip, 3389).host, out var old))
+        {
+            keys[host] = old;
+            try { _store.Save(notify: false); } catch { /* ignore */ }
+        }
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.Unicode.GetBytes(e.PublicKey)));
-        if (_store.Data.PinnedKeys.TryGetValue(host, out var known))
+        if (keys.TryGetValue(host, out var known))
         {
             if (!string.Equals(known, hash, StringComparison.OrdinalIgnoreCase))
             {
                 _pendingKeyHash = hash;
                 e.Cancel = true;
             }
+            else _pendingKeyHash = null;
             return;
         }
         _store.Data.PinnedKeys[host] = hash; // trust on first use
@@ -399,9 +422,7 @@ internal sealed class SessionView : UserControl
     private void TrustNewKey()
     {
         if (_pendingKeyHash == null) return;
-        var b = _store.Data.Bastion;
-        string host = Machine.Mode == ConnectionMode.Direct ? ParseHost(Machine.Ip, 3389).host : $"{b.Host}:{b.Port}";
-        _store.Data.PinnedKeys[host] = _pendingKeyHash;
+        _store.Data.PinnedKeys[PinKey()] = _pendingKeyHash;
         _pendingKeyHash = null;
         _store.Save(notify: false);
         Connect();
@@ -502,11 +523,13 @@ internal sealed class SessionView : UserControl
 
     /// <summary>
     /// Auto-fill runs only when the machine has its own assigned credential (right-click → Credentials),
-    /// or the global "auto-fill on connect" setting is on. Otherwise nothing is typed automatically.
+    /// or the global "auto-fill on connect" setting is on, or the machine is set to "Always". Otherwise
+    /// nothing is typed automatically.
     /// </summary>
-    private bool AutoEligible => Machine.AutoType != AutoTypeMode.Never &&
-                                 (Machine.HasOwnCredential || _store.Data.Settings.AutoFillOnConnect);
-    private bool TargetTypingAllowed() => AutoEligible && _store.ResolveCredential(Machine) != null;
+    private bool AutoEligible => Machine.AutoType == AutoTypeMode.Always ||
+                                 (Machine.AutoType != AutoTypeMode.Never &&
+                                  (Machine.HasOwnCredential || _store.Data.Settings.AutoFillOnConnect));
+    private bool TargetTypingAllowed() => AutoEligible && _store.Data.Settings.AutoTypeEnabled && _store.ResolveCredential(Machine) != null;
     private bool BastionTypingAllowed() => AutoEligible && Machine.Mode == ConnectionMode.Bastion &&
                                            !string.IsNullOrEmpty(_store.Data.Bastion.PrimaryPassword);
 
@@ -546,6 +569,8 @@ internal sealed class SessionView : UserControl
 
         // Only fill into a session the user can actually see and that is the active window.
         if (!IsOnScreen() || !Win.IsForeground(this)) return;
+        // The keyboard is elsewhere in Remterm (e.g. a split SSH pane) and in use: don't take it away.
+        if (!Win.Contains(_rdp, Win.FocusedWindow()) && Win.IdleMs() < 1500) return;
         _visibleWaitMs += _autoTypeTimer.Interval;
 
         using var bmp = PromptDetector.CaptureSession(_rdp);
@@ -568,6 +593,7 @@ internal sealed class SessionView : UserControl
             finally { _reading = false; }
             bool settled = Settled(other);
             if (!settled || !IsConnected || _typing || _store.ResolveCredential(Machine) is not { } wc) { CheckTimeout(); return; }
+            if (!IsOnScreen() || !Win.IsForeground(this)) return; // moved away while reading: try again later
             if (other == ScreenReader.Screen.WindowsPassword)
             {
                 _typedWindows = true;
@@ -593,6 +619,7 @@ internal sealed class SessionView : UserControl
             catch (Exception ex) { Diag.Log($"[{Machine.Name}] OCR error: {ex.Message}"); }
             finally { _reading = false; }
             if (!IsConnected || _rdp == null || _typing) return;
+            if (!IsOnScreen() || !Win.IsForeground(this)) return; // moved away while reading: try again later
             Diag.Log($"[{Machine.Name}] auto: login page, screen={screen}");
             // A page still being drawn reads differently from one frame to the next: act once it reads the same twice.
             if (!Settled(screen)) return;
@@ -626,12 +653,23 @@ internal sealed class SessionView : UserControl
                 return;
 
             default:
-                // Login-coloured screen, but OCR unavailable or unsure. After a short wait, fill the
-                // assigned credential (the common single-login case).
-                if (!_typedTarget && TargetTypingAllowed() && (!ScreenReader.Available || _visibleWaitMs > 1500))
+                // Login-coloured screen, but OCR unavailable or unsure. Through the bastion (WALLIX's own
+                // pages), after a short wait, fill the assigned credential (the common single-login case).
+                // A direct machine has no WALLIX pages: a navy screen there is a desktop unless OCR reads
+                // Windows' own sign-in on it.
+                if (Machine.Mode == ConnectionMode.Bastion && !_typedTarget && TargetTypingAllowed() &&
+                    (!ScreenReader.Available || _visibleWaitMs > 1500))
                 {
                     var c = _store.ResolveCredential(Machine);
                     if (c != null) { _typedTarget = true; StopAutoType(); FillLogin(c.Username, c.Password); }
+                }
+                else if (Machine.Mode == ConnectionMode.Direct && !_typedWindows && TargetTypingAllowed() &&
+                         screen is ScreenReader.Screen.WindowsPassword or ScreenReader.Screen.WindowsLogin &&
+                         _store.ResolveCredential(Machine) is { } wc)
+                {
+                    _typedWindows = true;
+                    if (screen == ScreenReader.Screen.WindowsPassword) FillPassword(wc.Password);
+                    else FillLogin(wc.Username, wc.Password);
                 }
                 else CheckTimeout();
                 return;
@@ -640,7 +678,8 @@ internal sealed class SessionView : UserControl
 
     private void CheckTimeout()
     {
-        if (string.IsNullOrEmpty(Machine.Target)) { if (_visibleWaitMs > 10 * 60_000) StopAutoType(); }
+        if (Machine.Mode == ConnectionMode.Direct) { if (_visibleWaitMs > 2 * 60_000) StopAutoType(); }
+        else if (string.IsNullOrEmpty(Machine.Target)) { if (_visibleWaitMs > 10 * 60_000) StopAutoType(); }
         else if (_visibleWaitMs > 30000) StopAutoType();
     }
 
@@ -695,10 +734,15 @@ internal sealed class SessionView : UserControl
             Notify?.Invoke(this, "Bring the session tab to the front (close any open dialog), then press Ctrl+Alt+K.");
             return;
         }
+        bool type = _usLayout && KeyTyper.CanType(login + password, out _);
+        if (!type && !_store.Data.Settings.RedirectClipboard)
+        {
+            Notify?.Invoke(this, "This login can't be filled: turn on clipboard redirection or the US keyboard layout in ⚙ Settings.");
+            return;
+        }
         if (!keepWatching) StopAutoType();
         _typing = true;
         bool ok = true, pasted = false, caps = false;
-        bool type = _store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(login + password, out _);
         Diag.Log($"[{Machine.Name}] FILL ({(type ? "keys" : "clipboard")}) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
         try
         {
@@ -730,7 +774,11 @@ internal sealed class SessionView : UserControl
             }
             await Task.Delay(300);
 
-            if (Diag.Enabled) Diag.Log($"[{Machine.Name}] FILL done ok={ok}  after={Diag.SaveCapture(PromptDetector.CaptureSession(_rdp), "afterfill")}");
+            if (Diag.Enabled)
+            {
+                using var after = PromptDetector.CaptureSession(_rdp);
+                Diag.Log($"[{Machine.Name}] FILL done ok={ok}  after={Diag.SaveCapture(after, "afterfill")}");
+            }
         }
         catch (Exception ex)
         {
@@ -757,13 +805,19 @@ internal sealed class SessionView : UserControl
             Notify?.Invoke(this, "Bring the session tab to the front, then press Ctrl+Alt+K.");
             return;
         }
+        bool type = _usLayout && KeyTyper.CanType(password, out _);
+        if (!type && !_store.Data.Settings.RedirectClipboard)
+        {
+            Notify?.Invoke(this, "This login can't be filled: turn on clipboard redirection or the US keyboard layout in ⚙ Settings.");
+            return;
+        }
         StopAutoType(); // the last screen there is to fill
         _typing = true;
         bool ok = true, pasted = false, caps = false;
         try
         {
             if (!await PrepareInput()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
-            if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(password, out _))
+            if (type)
             {
                 caps = await CapsLockOffForTyping();
                 ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
@@ -885,9 +939,14 @@ internal sealed class SessionView : UserControl
 
     private static bool SetClipboard(string text)
     {
+        // Kept out of clipboard history, cloud clipboard and clipboard monitors: it holds a password.
+        var obj = new DataObject();
+        obj.SetText(text);
+        foreach (var f in new[] { "ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard" })
+            obj.SetData(f, new MemoryStream(new byte[4]));
         for (int i = 0; i < 3; i++)
         {
-            try { Clipboard.SetText(text); return true; }
+            try { Clipboard.SetDataObject(obj, false); return true; }
             catch { Thread.Sleep(80); }
         }
         return false;
@@ -977,7 +1036,7 @@ internal sealed class SessionView : UserControl
             FindForm()?.Activate(); // our own pop-out window; embedded sessions have none
             _rdp.Focus();
             try { _rdp.Ocx.Focus(); } catch { /* not all versions expose it */ }
-            return Win.GetForegroundWindow() == root;
+            return Win.GetForegroundWindow() == root && Win.Contains(_rdp, Win.FocusedWindow());
         }
         catch
         {

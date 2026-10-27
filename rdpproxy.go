@@ -146,6 +146,7 @@ func (r *rdpRelay) serve(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer ws.Close()
+	ws.SetReadLimit(1 << 16) // the RDCleanPath request is small; raised for the RDP traffic below
 
 	pdu, err := readRDCleanPath(ws)
 	relayLog("request: err=%v dest=%q x224=%d bytes", err, func() string {
@@ -228,6 +229,7 @@ func (r *rdpRelay) serve(w http.ResponseWriter, req *http.Request) {
 	if err != nil || ws.WriteMessage(websocket.BinaryMessage, res) != nil {
 		return
 	}
+	ws.SetReadLimit(1 << 24)
 
 	// Relay until either side closes.
 	done := make(chan struct{}, 2)
@@ -274,6 +276,9 @@ func readRDCleanPath(ws *websocket.Conn) (*rdcpPDU, error) {
 		}
 		buf = append(buf, data...)
 		if n, ok := derLength(buf); ok {
+			if n > 1<<16 {
+				return nil, errors.New("RDCleanPath request too large")
+			}
 			if len(buf) < n {
 				continue
 			}

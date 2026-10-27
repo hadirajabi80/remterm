@@ -389,6 +389,12 @@ export function KeyDetailsDialog(props: {
       setExporting(false);
     }
   };
+  // Enter in the install fields installs; it must not submit (and close) the whole form.
+  const installOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (hostId && !exporting) void exportToHost();
+  };
 
   return (
     <Modal
@@ -461,9 +467,10 @@ export function KeyDetailsDialog(props: {
               placeholder={`Password for ${hostLabel(props.hosts.find((h) => h.id === hostId) ?? { user: '', address: '', port: 22 })}`}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={installOnEnter}
             />
           )}
-          <input className="input mono" placeholder="~/.ssh/authorized_keys" value={path} onChange={(e) => setPath(e.target.value)} />
+          <input className="input mono" placeholder="~/.ssh/authorized_keys" value={path} onChange={(e) => setPath(e.target.value)} onKeyDown={installOnEnter} />
           {exportError && <div className="error-box">{exportError}</div>}
         </div>
 

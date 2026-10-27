@@ -15,6 +15,8 @@ export function SnippetVarsDialog(props: {
     Object.fromEntries(vars.map((v) => [v.name, rememberedVar(v.name) ?? v.def])),
   );
   const preview = fillVars(props.snippet.command, values);
+  // {{name}} needs a value; only {{name:default}} may be left empty.
+  const missing = new Set(vars.filter((v) => !v.optional && !(values[v.name] ?? '').trim()).map((v) => v.name));
 
   return (
     <Modal
@@ -26,7 +28,7 @@ export function SnippetVarsDialog(props: {
           <button className="btn" onClick={props.onCancel}>
             Cancel
           </button>
-          <button className="btn primary" type="submit" form="vars-form">
+          <button className="btn primary" type="submit" form="vars-form" disabled={missing.size > 0}>
             {props.execute ? 'Run' : 'Insert'}
           </button>
         </>
@@ -37,6 +39,7 @@ export function SnippetVarsDialog(props: {
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
+          if (missing.size) return;
           for (const v of vars) rememberVar(v.name, values[v.name] ?? '');
           props.onSubmit(preview);
         }}
@@ -46,6 +49,7 @@ export function SnippetVarsDialog(props: {
           <label key={v.name} className="field">
             <span>
               {v.name} {v.def && <span className="hint">— default {v.def}</span>}
+              {missing.has(v.name) && <span className="hint"> — required</span>}
             </span>
             <input
               className="input mono"

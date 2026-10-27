@@ -4,6 +4,7 @@ import { useCover } from '../rdp';
 import { BACKGROUNDS, SCHEMES, loadImageFile } from '../themes';
 import type { Appearance, LocalShell } from '../types';
 import { Icon } from './Icon';
+import { useOverlayEscape } from './Modal';
 
 export interface TypingPrefs {
   autosuggest: boolean;
@@ -78,18 +79,7 @@ export function AppearancePanel(props: {
     }
   }, [section]);
 
-  const closeRef = useRef(props.onClose);
-  closeRef.current = props.onClose;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        closeRef.current();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  useOverlayEscape(props.onClose);
 
   const pickImage = async (file?: File) => {
     if (!file) return;
@@ -299,7 +289,7 @@ export function AppearancePanel(props: {
                     <span>
                       Font size <b>{a.fontSize}px</b>
                     </span>
-                    <input type="range" min={10} max={24} step={1} value={a.fontSize} onChange={(e) => set('fontSize', Number(e.target.value))} />
+                    <input type="range" min={9} max={32} step={1} value={a.fontSize} onChange={(e) => set('fontSize', Number(e.target.value))} />
                   </label>
                   <p className="hint">Ctrl + / Ctrl − / Ctrl 0 change it from the keyboard.</p>
                 </div>
@@ -344,7 +334,7 @@ export function AppearancePanel(props: {
                     <input type="checkbox" checked={props.typing.recordLogs} onChange={(e) => props.onTyping({ ...props.typing, recordLogs: e.target.checked })} />
                     <span>
                       <b>Record terminal sessions</b>
-                      <span className="hint">Keeps the last 5 sessions per server (bookmark to keep longer). Hidden password input is never recorded.</span>
+                      <span className="hint">Keeps the last 5 sessions per server (bookmark to keep longer). Everything shown on screen is recorded (typed input at hidden prompts is not).</span>
                     </span>
                   </label>
                 </div>

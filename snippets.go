@@ -4,7 +4,8 @@ package main
 // the UI asks for them before sending and remembers the last value.
 // Docker/Go template syntax such as {{.Names}} or {{json .State}} is left
 // alone because placeholder names must start with a letter and contain no
-// spaces.
+// spaces; Go template keywords such as {{end}} or {{else}} are skipped by
+// the UI too.
 
 // Bump when the catalog changes so existing installs merge in new entries.
 const snippetCatalogVersion = 2

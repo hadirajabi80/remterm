@@ -1,13 +1,14 @@
 import type { Terminal } from '@xterm/xterm';
 import { history, typingPrefs } from './history';
 
-// Prompt endings: "user@host:~$ ", "root# ", "PS C:\x> ", "C:\x>", "❯ ".
-const PROMPT_RE = /^.*?(?:PS [^>\n]*>|[$#%❯›»>])\s?(.+)$/;
+// Prompt endings: "user@host:~$ ", "root# ", "PS C:\x> ", "C:\x>", "❯ ", "➜ ".
+const PROMPT_RE = /^.*?(?:PS [^>\n]*>|[$#%❯›»>➜])\s?(.+)$/;
 
+/** The command after the prompt; a leading space is kept ("don't record"). */
 export function extractAfterPrompt(line: string): string | null {
   const m = line.trimEnd().match(PROMPT_RE);
-  const cmd = m?.[1]?.trim();
-  return cmd ? cmd : null;
+  const cmd = m?.[1]?.trimEnd();
+  return cmd && cmd.trim() ? cmd : null;
 }
 
 export interface CursorAnchor {
@@ -69,7 +70,7 @@ export class LineTracker {
       if (ch === '\r' || ch === '\n') {
         this.commit();
       } else if (ch === '\x7f' || ch === '\b') {
-        if (this.clean) this.buffer = this.buffer.slice(0, -1);
+        if (this.clean) this.buffer = Array.from(this.buffer).slice(0, -1).join('');
       } else if (ch === '\x03' || ch === '\x15') {
         this.reset(); // Ctrl+C / Ctrl+U clear the line
       } else if (ch === '\x1b') {
@@ -103,7 +104,7 @@ export class LineTracker {
     const key = this.hostKey();
     if (!clean) {
       const cmd = extractAfterPrompt(this.lineText(row));
-      if (cmd) history.add(cmd, key);
+      if (cmd && !cmd.startsWith(' ')) history.add(cmd.trim(), key);
       return;
     }
     if (!typed.trim()) return;
@@ -116,7 +117,7 @@ export class LineTracker {
     const check = (attempt: number) =>
       window.setTimeout(
         () => {
-          if (this.lineText(row).includes(typed.trim())) history.add(typed, key);
+          if (this.lineText(row).trimEnd().endsWith(typed.trimEnd())) history.add(typed, key);
           else if (attempt < 2) check(attempt + 1);
         },
         attempt === 0 ? 400 : 1500,
@@ -133,8 +134,12 @@ export class LineTracker {
     if (!upToCursor) while (b.getLine(end + 1)?.isWrapped) end++;
     let s = '';
     for (let r = start; r <= end; r++) {
-      const text = b.getLine(r)?.translateToString(r === end && !upToCursor) ?? '';
-      s += upToCursor && r === row ? text.slice(0, b.cursorX) : text;
+      // Columns, not string indices: wide characters take two cells.
+      const line = b.getLine(r);
+      s +=
+        (upToCursor && r === row
+          ? line?.translateToString(false, 0, b.cursorX)
+          : line?.translateToString(r === end && !upToCursor)) ?? '';
     }
     return s;
   }
@@ -145,7 +150,7 @@ export class LineTracker {
     const b = this.term.buffer.active;
     if (b.viewportY !== b.baseY) return false;
     const row = b.baseY + b.cursorY;
-    const after = (b.getLine(row)?.translateToString(true) ?? '').slice(b.cursorX);
+    const after = b.getLine(row)?.translateToString(true, b.cursorX) ?? '';
     if (after.trim() !== '') return false; // text after the cursor, e.g. a shell's own suggestion
     return this.lineText(row, true).endsWith(this.buffer);
   }
@@ -167,7 +172,7 @@ export class LineTracker {
 
   /** Replaces the typed line with a command from history. */
   replaceLine(command: string, run: boolean) {
-    this.send('\x7f'.repeat(this.buffer.length) + command + (run ? '\r' : ''));
+    this.send('\x7f'.repeat(Array.from(this.buffer).length) + command + (run ? '\r' : ''));
   }
 
   /** Accepts the gray suggestion (or just its next word). */

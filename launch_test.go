@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -24,6 +25,13 @@ func TestCwdFromArgs(t *testing.T) {
 		{[]string{"--cwd", file}, dir},            // a file opens its folder
 		{[]string{"--cwd", filepath.Join(dir, "missing")}, ""},
 	}
+	if runtime.GOOS == "windows" {
+		// Explorer's `--cwd "%V"` on a drive root arrives as `C:"`.
+		cases = append(cases, struct {
+			args []string
+			want string
+		}{[]string{"--cwd", `C:"`}, `C:\`})
+	}
 	for _, c := range cases {
 		if got := cwdFromArgs(c.args); got != c.want {
 			t.Errorf("cwdFromArgs(%q) = %q, want %q", c.args, got, c.want)
@@ -42,6 +50,10 @@ func TestRecordable(t *testing.T) {
 		"psql -U app --password secret":       false,
 		"git log --oneline":                   true,
 		"echo password reset flow is done ok": true,
+		"mysql -pHunter2 app":                 false,
+		"curl -u a:b https://x":               false,
+		"git clone https://me:tok@host/r.git": false,
+		"AWS_SECRET_ACCESS_KEY=x aws s3 ls":   false,
 	} {
 		if got := recordable(cmd); got != want {
 			t.Errorf("recordable(%q) = %v, want %v", cmd, got, want)

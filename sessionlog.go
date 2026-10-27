@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -40,11 +41,13 @@ type logStore struct {
 	mu      sync.Mutex
 	dir     string
 	entries []LogEntry
-	enabled bool
+	enabled atomic.Bool
+	open    map[string]*sessionLog // logs of sessions still running
 }
 
 func openLogStore() *logStore {
-	l := &logStore{enabled: true}
+	l := &logStore{open: map[string]*sessionLog{}}
+	l.enabled.Store(true)
 	d, err := dataDir()
 	if err != nil {
 		return l
@@ -90,12 +93,14 @@ type sessionLog struct {
 	mu    sync.Mutex
 	f     *os.File
 	size  int64
+	// truncated is set once the size cap is hit and the marker written.
+	truncated bool
 }
 
 func (l *logStore) start(hostKey, title string) *sessionLog {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.enabled || l.dir == "" {
+	if !l.enabled.Load() || l.dir == "" {
 		return nil
 	}
 	e := LogEntry{ID: newID(), HostKey: hostKey, Title: title, Started: time.Now().UnixMilli()}
@@ -103,17 +108,24 @@ func (l *logStore) start(hostKey, title string) *sessionLog {
 	if err != nil {
 		return nil
 	}
+	s := &sessionLog{store: l, id: e.ID, f: f}
+	if l.open == nil {
+		l.open = map[string]*sessionLog{}
+	}
+	l.open[e.ID] = s
 	l.entries = append(l.entries, e)
 	l.pruneLocked(hostKey)
 	l.saveLocked()
-	return &sessionLog{store: l, id: e.ID, f: f}
+	return s
 }
 
-// pruneLocked keeps the newest unbookmarked logs per host.
+// pruneLocked keeps the newest unbookmarked logs per host. Logs of running
+// sessions are left alone (Windows will not delete an open file); finish
+// prunes again once the session ends.
 func (l *logStore) pruneLocked(hostKey string) {
 	var mine []int
 	for i, e := range l.entries {
-		if e.HostKey == hostKey && !e.Bookmarked {
+		if e.HostKey == hostKey && !e.Bookmarked && l.open[e.ID] == nil {
 			mine = append(mine, i)
 		}
 	}
@@ -141,7 +153,13 @@ func (s *sessionLog) write(b []byte) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.f == nil || s.size >= maxLogBytes {
+	if s.f == nil || s.truncated || !s.store.enabled.Load() {
+		return
+	}
+	if s.size+int64(len(b)) > maxLogBytes {
+		n, _ := s.f.Write([]byte("\r\n[log truncated at 20 MB]\r\n"))
+		s.size += int64(n)
+		s.truncated = true
 		return
 	}
 	n, _ := s.f.Write(b)
@@ -162,10 +180,13 @@ func (s *sessionLog) finish() {
 	l := s.store
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	delete(l.open, s.id)
 	for i := range l.entries {
 		if l.entries[i].ID == s.id {
 			l.entries[i].Ended = time.Now().UnixMilli()
 			l.entries[i].Size = size
+			l.pruneLocked(l.entries[i].HostKey)
+			break
 		}
 	}
 	l.saveLocked()
@@ -215,6 +236,17 @@ func (a *App) DeleteLog(id string) error {
 	l := a.logs
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	// Close a running session's file first, or Windows refuses the delete;
+	// its later writes then become no-ops.
+	if s := l.open[id]; s != nil {
+		s.mu.Lock()
+		if s.f != nil {
+			s.f.Close()
+			s.f = nil
+		}
+		s.mu.Unlock()
+		delete(l.open, id)
+	}
 	l.entries = without(l.entries, id, func(e LogEntry) string { return e.ID })
 	_ = os.Remove(l.file(filepath.Base(id)))
 	l.saveLocked()
@@ -222,9 +254,7 @@ func (a *App) DeleteLog(id string) error {
 }
 
 func (a *App) SetLogging(enabled bool) {
-	a.logs.mu.Lock()
-	a.logs.enabled = enabled
-	a.logs.mu.Unlock()
+	a.logs.enabled.Store(enabled)
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[@-Z\\-_=>]`)
@@ -234,21 +264,29 @@ func plainText(b []byte) string {
 	s := ansiRe.ReplaceAllString(string(b), "")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	var out strings.Builder
+	var stack []rune
 	for _, line := range strings.Split(s, "\n") {
-		// A bare \r rewrites the line: keep what was written last.
-		if i := strings.LastIndex(line, "\r"); i >= 0 && i < len(line)-1 {
-			line = line[i+1:]
-		}
-		line = strings.TrimRight(line, "\r")
-		for strings.Contains(line, "\b") {
-			i := strings.Index(line, "\b")
-			if i == 0 {
-				line = line[1:]
+		// A bare \r rewrites the line (keep what was written last; a
+		// trailing one changes nothing). \b erases one character.
+		cr := false
+		stack = stack[:0]
+		for _, r := range line {
+			if r == '\r' {
+				cr = true
+				continue
+			}
+			if cr {
+				stack, cr = stack[:0], false
+			}
+			if r == '\b' {
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
 			} else {
-				line = line[:i-1] + line[i+1:]
+				stack = append(stack, r)
 			}
 		}
-		out.WriteString(line)
+		out.WriteString(string(stack))
 		out.WriteByte('\n')
 	}
 	return out.String()
@@ -257,16 +295,29 @@ func plainText(b []byte) string {
 // ExportLog saves a log as plain text where the user chooses.
 func (a *App) ExportLog(id string) (string, error) {
 	var e LogEntry
+	found := false
 	for _, x := range a.ListLogs() {
 		if x.ID == id {
-			e = x
+			e, found = x, true
 		}
+	}
+	if !found {
+		return "", errors.New("log no longer exists")
 	}
 	b, err := os.ReadFile(a.logs.file(filepath.Base(id)))
 	if err != nil {
 		return "", err
 	}
-	name := strings.NewReplacer("/", "-", `\`, "-", ":", "-", " ", "_", "—", "-").Replace(e.Title)
+	name := strings.Map(func(r rune) rune {
+		switch {
+		case r < 0x20 || strings.ContainsRune(`<>:"/\|?*—`, r):
+			return '-'
+		case r == ' ':
+			return '_'
+		}
+		return r
+	}, e.Title)
+	name = strings.TrimRight(name, ". ")
 	path, err := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{
 		Title:           "Export session log",
 		DefaultFilename: name + "_" + time.UnixMilli(e.Started).Format("2006-01-02_1504") + ".txt",

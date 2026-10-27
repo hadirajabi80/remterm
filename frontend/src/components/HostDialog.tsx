@@ -71,17 +71,25 @@ export function HostDialog(props: {
   }, [protocol]);
 
   // Pasting "user@host:port" into the address field fills all three.
-  const splitAddress = () => {
+  // Also applied on submit, so Enter right after pasting saves the split fields.
+  const splitAddress = (): Pick<Host, 'user' | 'address' | 'port'> | null => {
     const m = h.address.trim().match(/^(?:ssh\s+)?(?:([^@\s]+)@)?([^:\s]+|\[[^\]]+\])(?::(\d+))?$/);
-    if (!m) return;
-    setH((p) => ({ ...p, user: m[1] ?? p.user, address: m[2].replace(/^\[|\]$/g, ''), port: m[3] ? Number(m[3]) : p.port }));
+    if (!m) return null;
+    return { user: m[1] ?? h.user, address: m[2].replace(/^\[|\]$/g, ''), port: m[3] ? Number(m[3]) : h.port };
+  };
+  const applySplit = () => {
+    const patch = splitAddress();
+    if (patch) setH((p) => ({ ...p, ...patch }));
   };
 
   const submit = async () => {
     setBusy(true);
     setError('');
+    const split = protocol === 'serial' ? null : splitAddress();
+    const host = split ? { ...h, ...split } : h;
+    if (split) setH(host);
     try {
-      await props.onSave({ ...h, port: Number(h.port) || (protocol === 'telnet' ? 23 : 22) }, secret, proxyPassword, forget, connectAfter);
+      await props.onSave({ ...host, port: Number(host.port) || (protocol === 'telnet' ? 23 : 22) }, secret, proxyPassword, forget, connectAfter);
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -219,7 +227,7 @@ export function HostDialog(props: {
                     placeholder="server.example.com, 10.0.0.5 or user@host:port"
                     value={h.address}
                     onChange={(e) => set('address', e.target.value)}
-                    onBlur={splitAddress}
+                    onBlur={applySplit}
                   />
                   <input className="input mono port" type="number" min={1} max={65535} value={h.port} onChange={(e) => set('port', Number(e.target.value))} title="Port" />
                 </div>
@@ -278,7 +286,7 @@ export function HostDialog(props: {
                 />
               </label>
             )}
-            {!h.identityId && !inheritedIdentity && protocol !== 'serial' && (
+            {(!isSSH || (!h.identityId && !inheritedIdentity)) && protocol !== 'serial' && (
               <label className="field">
                 Username
                 <input className="input mono" placeholder="root" value={h.user} onChange={(e) => set('user', e.target.value)} />

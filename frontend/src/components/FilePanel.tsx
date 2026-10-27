@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, cleanError, clipboard, errorMessage } from '../api';
+import { api, cleanError, clipboard, errorMessage, events } from '../api';
 import { transfers } from '../transfers';
 import type { FileEntry, Host } from '../types';
 import { formatBytes, formatDate, octal } from '../util';
@@ -53,14 +53,21 @@ export function FilePanel(props: {
   const [dropHover, setDropHover] = useState(false);
   const pathRef = useRef(path);
   pathRef.current = path;
+  const fsIdRef = useRef(fsId);
+  fsIdRef.current = fsId;
+  const navSeq = useRef(0);
+  // Re-opens the host session after it dropped (null for the local disk).
+  const connectRef = useRef<(() => Promise<void>) | null>(null);
 
   // Connect (or switch) the source.
   useEffect(() => {
     let cancelled = false;
     let opened: string | null = null;
+    let connected = false;
     setEntries([]);
     setSel(new Set());
     setError('');
+    connectRef.current = null;
     if (isLocal) {
       setFsId('local');
       void api.fsHome('local').then((h) => {
@@ -82,7 +89,10 @@ export function FilePanel(props: {
         }
         opened = sid;
         setFsId(sid);
-        await navigate(sid, home);
+        // After a reconnect, go back to the folder we were showing.
+        const dir = connected && pathRef.current ? pathRef.current : home;
+        connected = true;
+        await navigate(sid, dir);
       } catch (e) {
         if (cancelled) return;
         const msg = errorMessage(e);
@@ -95,9 +105,14 @@ export function FilePanel(props: {
         if (!cancelled) setLoading(false);
       }
     };
+    connectRef.current = () => {
+      setError('');
+      return connect();
+    };
     void connect();
     return () => {
       cancelled = true;
+      connectRef.current = null;
       if (opened) void api.closeSftp(opened);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,21 +121,35 @@ export function FilePanel(props: {
   useEffect(() => props.onState({ fsId, path }), [fsId, path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const navigate = useCallback(async (id: string, dir: string) => {
+    const seq = ++navSeq.current; // only the latest listing may update the view
     setLoading(true);
     setError('');
     try {
       const list = await api.fsList(id, dir);
+      if (seq !== navSeq.current) return;
       setEntries(list);
       setPath(dir);
       setPathText(dir);
       setSel(new Set());
     } catch (e) {
+      if (seq !== navSeq.current) return;
       setError(cleanError(errorMessage(e)));
       setPathText(pathRef.current);
     } finally {
-      setLoading(false);
+      if (seq === navSeq.current) setLoading(false);
     }
   }, []);
+
+  // The host session dropped (network, server restart): say so, Retry reconnects.
+  useEffect(
+    () =>
+      events.fsClosed((id) => {
+        if (id !== fsIdRef.current) return;
+        setFsId(null);
+        setError(`Connection to ${host?.name ?? 'server'} was lost`);
+      }),
+    [host?.name],
+  );
 
   const reload = useCallback(() => fsId && navigate(fsId, pathRef.current), [fsId, navigate]);
 
@@ -164,6 +193,10 @@ export function FilePanel(props: {
       props.notify('Open a folder on the other side first', 'error');
       return;
     }
+    if (fsId === o.fsId && path === o.path) {
+      props.notify('Both sides show the same folder', 'error');
+      return;
+    }
     transfers.start(fsId, paths, o.fsId, o.path).catch((err) => props.notify(cleanError(errorMessage(err)), 'error'));
   };
 
@@ -183,11 +216,14 @@ export function FilePanel(props: {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    // Keys typed in a dialog (e.g. Enter on its Delete button) belong to the dialog.
+    if (dialog || (e.target as HTMLElement).closest('.overlay')) return;
     if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const drive = selected.some((s) => s.mode === 'drive'); // drives can't be renamed or deleted
     if (e.key === 'Enter' && selected.length === 1) open(selected[0]);
     else if (e.key === 'Backspace') void up();
-    else if (e.key === 'Delete' && selected.length) setDialog({ kind: 'delete', paths: selected.map((s) => s.path) });
-    else if (e.key === 'F2' && selected.length === 1) setDialog({ kind: 'rename', entry: selected[0] });
+    else if (e.key === 'Delete' && selected.length && !drive) setDialog({ kind: 'delete', paths: selected.map((s) => s.path) });
+    else if (e.key === 'F2' && selected.length === 1 && !drive) setDialog({ kind: 'rename', entry: selected[0] });
     else if (e.key === 'F5') void reload();
     else if (e.ctrlKey && e.key.toLowerCase() === 'a') setSel(new Set(shown.map((s) => s.path)));
     else return;
@@ -208,6 +244,10 @@ export function FilePanel(props: {
     e.stopPropagation();
     const data = JSON.parse(raw) as { fsId: string; paths: string[] };
     const dstDir = into?.dir ? into.path : path;
+    if (!dstDir && isLocal) {
+      props.notify('Open a folder in this pane first', 'error');
+      return;
+    }
     if (data.fsId === fsId && dstDir === path) return; // dropped on itself
     if (data.fsId === fsId) {
       // Same server: move into the folder.
@@ -234,10 +274,11 @@ export function FilePanel(props: {
         onClick: () => copyToOther(targets.map((t) => t.path)),
       });
       items.push('sep');
-      if (targets.length === 1) items.push({ label: 'Rename', hint: 'F2', icon: <Icon name="edit" size={13} />, onClick: () => setDialog({ kind: 'rename', entry }) });
-      if (!isLocal && targets.length === 1) items.push({ label: 'Permissions…', icon: <Icon name="lock" size={13} />, onClick: () => setDialog({ kind: 'chmod', entry }) });
+      const drive = targets.some((t) => t.mode === 'drive'); // drives can't be renamed or deleted
+      if (targets.length === 1 && !drive) items.push({ label: 'Rename', hint: 'F2', icon: <Icon name="edit" size={13} />, onClick: () => setDialog({ kind: 'rename', entry }) });
+      if (!isLocal && targets.length === 1 && !drive) items.push({ label: 'Permissions…', icon: <Icon name="lock" size={13} />, onClick: () => setDialog({ kind: 'chmod', entry }) });
       items.push({ label: 'Copy path', icon: <Icon name="code" size={13} />, onClick: () => void clipboard.write(targets.map((t) => t.path).join('\n')) });
-      items.push({ label: `Delete${targets.length > 1 ? ` ${targets.length} items` : ''}`, hint: 'Del', icon: <Icon name="trash" size={13} />, onClick: () => setDialog({ kind: 'delete', paths: targets.map((t) => t.path) }) });
+      if (!drive) items.push({ label: `Delete${targets.length > 1 ? ` ${targets.length} items` : ''}`, hint: 'Del', icon: <Icon name="trash" size={13} />, onClick: () => setDialog({ kind: 'delete', paths: targets.map((t) => t.path) }) });
       items.push('sep');
     }
     items.push({ label: 'New folder', icon: <Icon name="plus" size={13} />, onClick: () => setDialog({ kind: 'mkdir' }) });
@@ -319,8 +360,8 @@ export function FilePanel(props: {
         {error && (
           <div className="fp-msg error">
             {error}
-            {fsId && (
-              <button className="btn sm" onClick={() => void reload()}>
+            {(fsId || !isLocal) && (
+              <button className="btn sm" onClick={() => void (fsId ? reload() : connectRef.current?.())}>
                 Retry
               </button>
             )}
@@ -443,9 +484,10 @@ function fileIcon(name: string): string {
 }
 
 function PermissionsDialog(props: { entry: FileEntry; onSave(perm: number): Promise<void>; onCancel(): void }) {
-  const [perm, setPerm] = useState(props.entry.perm & 0o777);
+  const [perm, setPerm] = useState(props.entry.perm & 0o7777); // keeps setuid/setgid/sticky
   const [error, setError] = useState('');
   const bit = (who: number, what: number) => 1 << ((2 - who) * 3 + (2 - what));
+  const octalText = perm > 0o777 ? (perm & 0o7777).toString(8).padStart(4, '0') : octal(perm);
   return (
     <Modal
       title={`Permissions — ${props.entry.name}`}
@@ -493,8 +535,8 @@ function PermissionsDialog(props: { entry: FileEntry; onSave(perm: number): Prom
           Octal
           <input
             className="input mono"
-            value={octal(perm)}
-            onChange={(e) => /^[0-7]{0,3}$/.test(e.target.value) && setPerm(parseInt(e.target.value || '0', 8))}
+            value={octalText}
+            onChange={(e) => /^[0-7]{0,4}$/.test(e.target.value) && setPerm(parseInt(e.target.value || '0', 8))}
           />
         </label>
       </div>

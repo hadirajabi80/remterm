@@ -230,6 +230,11 @@ func (s *Store) DeleteHost(id string) error {
 		kept = append(kept, h)
 	}
 	s.data.Hosts = kept
+	for i := range s.data.Groups {
+		if s.data.Groups[i].JumpHostID == id {
+			s.data.Groups[i].JumpHostID = ""
+		}
+	}
 	return s.saveLocked()
 }
 

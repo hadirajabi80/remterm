@@ -31,6 +31,8 @@ export interface SidebarCtx {
   deleteHost(h: Host): void;
   editGroup(path: string | null): void;
   connectGroup(path: string): void;
+  /** Opens these hosts side by side in one tab (e.g. the hosts of a group that pass the filter). */
+  connectHosts(hosts: Host[]): void;
   toggleFavorite(h: Host): void;
   importSSHConfig(): void;
   importPuTTY(): void;
@@ -166,15 +168,20 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
     });
 
   const hostMenu = (h: Host) => hostMenuItems(ctx, h);
-  const groupMenu = (path: string): MenuEntry[] => [
-    { label: 'Connect to all hosts', icon: <Icon name="play" size={12} />, onClick: () => ctx.connectGroup(path) },
-    { label: 'New host in group', icon: <Icon name="plus" size={13} />, onClick: () => ctx.editHost(null, path) },
-    { label: 'New subgroup', icon: <Icon name="folder" size={13} />, onClick: () => ctx.editGroup(path + '/') },
-    'sep',
-    { swatches: true, label: 'Color — shown on its tabs', value: ctx.colors[sshGroupKey(path)] ?? null, onPick: (c) => ctx.setColor(sshGroupKey(path), c) },
-    'sep',
-    { label: 'Group settings…', icon: <Icon name="gear" size={13} />, onClick: () => ctx.editGroup(path) },
-  ];
+  // The hosts a group shows (filter applied), its subgroups included.
+  const nodeHosts = (node: GroupNode): Host[] => [...node.hosts, ...node.children.flatMap(nodeHosts)];
+  const groupMenu = (node: GroupNode): MenuEntry[] => {
+    const path = node.path;
+    return [
+      { label: 'Connect to all hosts', icon: <Icon name="play" size={12} />, onClick: () => ctx.connectHosts(nodeHosts(node)) },
+      { label: 'New host in group', icon: <Icon name="plus" size={13} />, onClick: () => ctx.editHost(null, path) },
+      { label: 'New subgroup', icon: <Icon name="folder" size={13} />, onClick: () => ctx.editGroup(path + '/') },
+      'sep',
+      { swatches: true, label: 'Color — shown on its tabs', value: ctx.colors[sshGroupKey(path)] ?? null, onPick: (c) => ctx.setColor(sshGroupKey(path), c) },
+      'sep',
+      { label: 'Group settings…', icon: <Icon name="gear" size={13} />, onClick: () => ctx.editGroup(path) },
+    ];
+  };
 
   const renderHost = (h: Host, depth: number, keyPrefix = '') => (
     <div
@@ -184,7 +191,7 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
       tabIndex={0}
       title="Double-click or Enter to connect · right-click for more"
       onDoubleClick={() => ctx.connect(h)}
-      onKeyDown={(e) => e.key === 'Enter' && ctx.connect(h)}
+      onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && ctx.connect(h)}
       onContextMenu={(e) => {
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY, items: hostMenu(h) });
@@ -238,7 +245,7 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
           onClick={() => toggle(node.path)}
           onContextMenu={(e) => {
             e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY, items: groupMenu(node.path) });
+            setMenu({ x: e.clientX, y: e.clientY, items: groupMenu(node) });
           }}
         >
           <span className="chev">
@@ -255,7 +262,7 @@ function HostsPanel({ ctx }: { ctx: SidebarCtx }) {
           )}
           <span className="group-count">{node.total}</span>
           <span className="group-actions" onClick={(e) => e.stopPropagation()}>
-            <button className="icon-btn sm" title="Connect to all" onClick={() => ctx.connectGroup(node.path)}>
+            <button className="icon-btn sm" title="Connect to all" onClick={() => ctx.connectHosts(nodeHosts(node))}>
               <Icon name="play" size={11} />
             </button>
             <button className="icon-btn sm" title="Group settings" onClick={() => ctx.editGroup(node.path)}>
@@ -393,7 +400,7 @@ function SnippetsPanel({ ctx }: { ctx: SidebarCtx }) {
                     onClick={() => setSelectedId(s.id)}
                     onFocus={() => setSelectedId(s.id)}
                     onDoubleClick={() => ctx.runSnippet(s, true)}
-                    onKeyDown={(e) => e.key === 'Enter' && ctx.runSnippet(s, true)}
+                    onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && ctx.runSnippet(s, true)}
                   >
                     <div className="row-main">
                       <div className="row-title">{s.name}</div>

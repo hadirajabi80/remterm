@@ -180,17 +180,24 @@ func (a *App) openTelnet(req ConnectRequest, h Host) error {
 	if err != nil {
 		return err
 	}
-	t := &telnetConn{c: c, cols: clamp(req.Cols, 20, 1000, 80), rows: clamp(req.Rows, 5, 500, 24)}
+	t := &telnetConn{c: c, cols: clamp(req.Cols, 2, 1000, 80), rows: clamp(req.Rows, 1, 500, 24)}
 	s := &Session{id: req.SessionID, stdin: t, resize: t.resize, closeFn: func() { c.Close() }, done: make(chan struct{})}
 	a.registerSession(s, "ssh:"+h.ID, h.Name)
 
+	eh := a.effectiveHost(h) // identity may come from a group
+	user := eh.User
+	if user == "" && eh.IdentityID != "" {
+		if i, ok := find(a.ListIdentities(), eh.IdentityID, identityID); ok {
+			user = i.Username
+		}
+	}
 	password := req.Password
 	if password == "" {
-		password = a.savedSecret(h)
+		password = a.savedSecret(eh)
 	}
 	r := &telnetReader{t: t, buf: make([]byte, 16*1024)}
 	go func() {
-		a.pump(s, &telnetLogin{r: r, w: t, user: h.User, password: password})
+		a.pump(s, &telnetLogin{r: r, w: t, user: user, password: password})
 		a.closeSession(s, "Connection closed", false, -1)
 	}()
 	_ = a.rememberConnection(h, req.Password, req.SavePassword)

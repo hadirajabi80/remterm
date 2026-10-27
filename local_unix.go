@@ -94,7 +94,7 @@ func (a *App) OpenLocal(req LocalRequest) error {
 		env = append(env, "LANG=en_US.UTF-8") // apps started from Finder get no locale
 	}
 	cmd.Env = env
-	cols, rows := clamp(req.Cols, 20, 1000, 80), clamp(req.Rows, 5, 500, 24)
+	cols, rows := clamp(req.Cols, 2, 1000, 80), clamp(req.Rows, 1, 500, 24)
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return fmt.Errorf("start %s: %w", shell.Name, err)

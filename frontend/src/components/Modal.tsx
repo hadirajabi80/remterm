@@ -2,6 +2,39 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useCover } from '../rdp';
 import { Icon } from './Icon';
 
+/** Open overlays, innermost last: only the top one reacts to Esc. */
+const stack: symbol[] = [];
+
+/**
+ * Esc closes this overlay only when it is the topmost one (stacked dialogs
+ * close one at a time). On unmount the element focused before it opened
+ * (e.g. the terminal) gets the focus back.
+ */
+export function useOverlayEscape(onClose: () => void) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const token = Symbol('overlay');
+    const prev = document.activeElement as HTMLElement | null;
+    stack.push(token);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && stack[stack.length - 1] === token) {
+        e.preventDefault();
+        e.stopPropagation();
+        close.current();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      const i = stack.indexOf(token);
+      if (i >= 0) stack.splice(i, 1);
+      const now = document.activeElement;
+      if ((!now || now === document.body) && prev?.isConnected) prev.focus();
+    };
+  }, []);
+}
+
 export function Modal(props: {
   title: string;
   onClose(): void;
@@ -10,18 +43,7 @@ export function Modal(props: {
   width?: number;
 }) {
   useCover();
-  const close = useRef(props.onClose);
-  close.current = props.onClose;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        close.current();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  useOverlayEscape(props.onClose);
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
@@ -115,7 +137,7 @@ export function AuthDialog(props: {
         {props.canSave && (
           <label className="check">
             <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
-            Remember in Windows Credential Manager
+            Remember in the system credential store
           </label>
         )}
       </form>

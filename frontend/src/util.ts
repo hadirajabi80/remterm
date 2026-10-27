@@ -57,24 +57,32 @@ export function looksLikeSpec(q: string): boolean {
 // Names must start with a letter, so Docker/Go templates like {{.Names}} or
 // {{json .State}} are left untouched.
 const VAR_RE = /\{\{([A-Za-z][\w-]*)(?::([^{}]*))?\}\}/g;
+// Bare Go template actions ({{end}}, {{else}}…) are not placeholders.
+const TEMPLATE_KEYWORDS = new Set(['end', 'else', 'range', 'if', 'with', 'define', 'template', 'block', 'break', 'continue']);
 
 export interface SnippetVar {
   name: string;
   def: string;
+  /** Written as {{name:…}} somewhere: an empty value is allowed. */
+  optional: boolean;
 }
 
 export function snippetVars(command: string): SnippetVar[] {
   const seen = new Map<string, SnippetVar>();
   for (const m of command.matchAll(VAR_RE)) {
+    if (TEMPLATE_KEYWORDS.has(m[1])) continue;
     const v = seen.get(m[1]);
-    if (!v) seen.set(m[1], { name: m[1], def: m[2] ?? '' });
-    else if (!v.def && m[2]) v.def = m[2];
+    if (!v) seen.set(m[1], { name: m[1], def: m[2] ?? '', optional: m[2] !== undefined });
+    else {
+      if (!v.def && m[2]) v.def = m[2];
+      if (m[2] !== undefined) v.optional = true;
+    }
   }
   return [...seen.values()];
 }
 
 export function fillVars(command: string, values: Record<string, string>): string {
-  return command.replace(VAR_RE, (_all, name: string) => values[name] ?? '');
+  return command.replace(VAR_RE, (all, name: string) => (TEMPLATE_KEYWORDS.has(name) ? all : (values[name] ?? '')));
 }
 
 /** Splits a command into plain text and placeholder parts for highlighting. */
@@ -82,6 +90,7 @@ export function commandParts(command: string): { text: string; varName?: string 
   const parts: { text: string; varName?: string }[] = [];
   let last = 0;
   for (const m of command.matchAll(VAR_RE)) {
+    if (TEMPLATE_KEYWORDS.has(m[1])) continue;
     if (m.index! > last) parts.push({ text: command.slice(last, m.index) });
     parts.push({ text: m[1], varName: m[1] });
     last = m.index! + m[0].length;
@@ -94,7 +103,8 @@ const VAR_KEY = 'snippetVar:';
 
 export function rememberedVar(name: string): string | null {
   try {
-    return localStorage.getItem(VAR_KEY + name);
+    // An empty remembered value must not hide the default.
+    return localStorage.getItem(VAR_KEY + name) || null;
   } catch {
     return null;
   }

@@ -153,12 +153,18 @@ internal sealed class CredentialPicker : Form
         }
         int x = r.X + Theme.S(38);
         var icon = f.IsBastion ? Theme.IcoBastion + "  " : Theme.IcoKey + "  ";
-        TextRenderer.DrawText(e.Graphics, icon, Theme.Icon, new Point(x, r.Y + (r.Height - Theme.S(22)) / 2), f.IsBastion ? Theme.Accent : Theme.Gold);
+        TextRenderer.DrawText(e.Graphics, icon, Theme.Icon, new Point(x, r.Y + (r.Height - Theme.S(22)) / 2),
+            sel ? Color.White : f.IsBastion ? Theme.Accent : Theme.Gold);
         x += Theme.S(26);
+        // A long label takes at most 55% of the row; the login gets the rest. Both end in "…" when cut.
         var label = f.Label;
-        var sz = TextRenderer.MeasureText(label, Theme.UiBold);
-        TextRenderer.DrawText(e.Graphics, label, Theme.UiBold, new Point(x, r.Y + (r.Height - sz.Height) / 2), Theme.Text);
-        TextRenderer.DrawText(e.Graphics, f.Login, Theme.Ui, new Rectangle(x + sz.Width + Theme.S(10), r.Y, r.Width - x - sz.Width - Theme.S(20), r.Height),
-            sel ? Theme.Text : Theme.TextDim, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        var sz = TextRenderer.MeasureText(label, Theme.UiBold, Size.Empty, TextFormatFlags.NoPadding);
+        int avail = r.Right - Theme.S(12) - x;
+        int labelW = Math.Max(0, Math.Min(sz.Width, avail * 55 / 100));
+        TextRenderer.DrawText(e.Graphics, label, Theme.UiBold, new Rectangle(x, r.Y, labelW, r.Height), sel ? Color.White : Theme.Text,
+            TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        int loginX = x + labelW + Theme.S(10);
+        TextRenderer.DrawText(e.Graphics, f.Login, Theme.Ui, new Rectangle(loginX, r.Y, Math.Max(0, r.Right - Theme.S(12) - loginX), r.Height),
+            sel ? Color.White : Theme.TextDim, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
     }
 }

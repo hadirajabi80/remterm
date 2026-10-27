@@ -47,6 +47,17 @@ type fileSystem interface {
 }
 
 func entryFrom(fsys fileSystem, dir string, fi fs.FileInfo) FileEntry {
+	m := fi.Mode()
+	perm := uint32(m.Perm())
+	if m&fs.ModeSetuid != 0 {
+		perm |= 0o4000
+	}
+	if m&fs.ModeSetgid != 0 {
+		perm |= 0o2000
+	}
+	if m&fs.ModeSticky != 0 {
+		perm |= 0o1000
+	}
 	return FileEntry{
 		Name:     fi.Name(),
 		Path:     fsys.Join(dir, fi.Name()),
@@ -54,7 +65,7 @@ func entryFrom(fsys fileSystem, dir string, fi fs.FileInfo) FileEntry {
 		Link:     fi.Mode()&fs.ModeSymlink != 0,
 		Size:     fi.Size(),
 		Mode:     fi.Mode().String(),
-		Perm:     uint32(fi.Mode().Perm()),
+		Perm:     perm,
 		Modified: fi.ModTime().UnixMilli(),
 	}
 }
@@ -126,8 +137,22 @@ func (r *remoteFS) Open(p string) (io.ReadCloser, error) { return r.c.Open(p) }
 func (r *remoteFS) Create(p string) (io.WriteCloser, error) {
 	return r.c.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 }
-func (r *remoteFS) Mkdir(p string) error                { return r.c.Mkdir(p) }
-func (r *remoteFS) Rename(a, b string) error            { return r.c.PosixRename(a, b) }
+func (r *remoteFS) Mkdir(p string) error { return r.c.Mkdir(p) }
+func (r *remoteFS) Rename(a, b string) error {
+	err := r.c.PosixRename(a, b)
+	var se *sftp.StatusError
+	if err == nil || !errors.As(err, &se) || se.FxCode() != sftp.ErrSSHFxOpUnsupported {
+		return err
+	}
+	// No posix-rename@openssh.com extension: a plain rename, which refuses an
+	// existing target, so clear it first (copyTree swaps in a complete file).
+	if _, lerr := r.c.Lstat(b); lerr == nil {
+		if rerr := r.c.Remove(b); rerr != nil {
+			return err
+		}
+	}
+	return r.c.Rename(a, b)
+}
 func (r *remoteFS) RemoveAll(p string) error            { return r.c.RemoveAll(p) }
 func (r *remoteFS) Chmod(p string, m fs.FileMode) error { return r.c.Chmod(p, m) }
 
@@ -155,9 +180,10 @@ func (r *remoteFS) List(dir string) ([]FileEntry, error) {
 // ---- sessions ----
 
 type fileSession struct {
-	fs   fileSystem
-	conn *sshConn
-	sftp *sftp.Client
+	fs     fileSystem
+	conn   *sshConn
+	sftp   *sftp.Client
+	hostID string
 }
 
 type fileManager struct {
@@ -181,6 +207,43 @@ func (a *App) fsGet(id string) (fileSystem, error) {
 	return s.fs, nil
 }
 
+// fsSession returns the SFTP session behind id (nil for the local disk).
+func (a *App) fsSession(id string) *fileSession {
+	if id == localFSID {
+		return nil
+	}
+	a.files.mu.Lock()
+	defer a.files.mu.Unlock()
+	return a.files.sessions[id]
+}
+
+// sameFS reports whether two panes show the same disk: both local, or two
+// SFTP sessions to the same host.
+func sameFS(a, b fileSystem, aSess, bSess *fileSession) bool {
+	if _, ok := a.(localFS); ok {
+		_, ok := b.(localFS)
+		return ok
+	}
+	return aSess != nil && bSess != nil && aSess.hostID == bSess.hostID
+}
+
+// isRoot reports whether p is a drive (C:\) or the remote root folder.
+func isRoot(id, p string) bool {
+	if id == localFSID {
+		return p == "" || filepath.Dir(p) == p
+	}
+	return path.Clean(p) == "/"
+}
+
+// safeName rejects server-provided names that could escape the folder
+// they are written into on the local disk.
+func safeName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\:\x00") {
+		return fmt.Errorf("unsafe file name %q", name)
+	}
+	return nil
+}
+
 type SftpRequest struct {
 	SessionID    string `json:"sessionId"`
 	HostID       string `json:"hostId"`
@@ -198,7 +261,7 @@ func (a *App) OpenSftp(req SftpRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	c, err := sftp.NewClient(conn.client)
+	c, err := sftp.NewClient(conn.client, sftp.UseConcurrentWrites(true))
 	if err != nil {
 		conn.Close()
 		return "", fmt.Errorf("SFTP is not available on this server: %w", err)
@@ -209,7 +272,7 @@ func (a *App) OpenSftp(req SftpRequest) (string, error) {
 	}
 	a.rememberConnection(h, req.Password, req.SavePassword)
 	a.files.mu.Lock()
-	a.files.sessions[req.SessionID] = &fileSession{fs: &remoteFS{c: c, home: home}, conn: conn, sftp: c}
+	a.files.sessions[req.SessionID] = &fileSession{fs: &remoteFS{c: c, home: home}, conn: conn, sftp: c, hostID: req.HostID}
 	a.files.mu.Unlock()
 	go func() { // tell the pane when the connection drops
 		_ = conn.client.Wait()
@@ -286,6 +349,9 @@ func (a *App) FsRename(id, from, to string) error {
 	if err != nil {
 		return err
 	}
+	if isRoot(id, from) {
+		return errors.New("refusing to delete or rename a drive or root folder")
+	}
 	return f.Rename(from, to)
 }
 
@@ -293,6 +359,11 @@ func (a *App) FsDelete(id string, paths []string) error {
 	f, err := a.fsGet(id)
 	if err != nil {
 		return err
+	}
+	for _, p := range paths {
+		if isRoot(id, p) {
+			return errors.New("refusing to delete or rename a drive or root folder")
+		}
 	}
 	for _, p := range paths {
 		if err := f.RemoveAll(p); err != nil {
@@ -307,7 +378,17 @@ func (a *App) FsChmod(id, p string, perm uint32) error {
 	if err != nil {
 		return err
 	}
-	return f.Chmod(p, fs.FileMode(perm&0o7777))
+	mode := fs.FileMode(perm & 0o777)
+	if perm&0o4000 != 0 {
+		mode |= fs.ModeSetuid
+	}
+	if perm&0o2000 != 0 {
+		mode |= fs.ModeSetgid
+	}
+	if perm&0o1000 != 0 {
+		mode |= fs.ModeSticky
+	}
+	return f.Chmod(p, mode)
 }
 
 // ---- transfers ----
@@ -345,6 +426,23 @@ func (a *App) FsTransfer(req TransferRequest) (string, error) {
 	}
 	if len(req.Paths) == 0 {
 		return "", errors.New("nothing to copy")
+	}
+	if req.DstDir == "" && req.DstFS == localFSID {
+		return "", errors.New("open a folder on the destination side first")
+	}
+	_, toLocal := dst.(localFS)
+	same := sameFS(src, dst, a.fsSession(req.SrcFS), a.fsSession(req.DstFS))
+	for _, sp := range req.Paths {
+		if toLocal {
+			if err := safeName(src.Base(sp)); err != nil {
+				return "", err
+			}
+		}
+		if same {
+			if err := overlap(toLocal, sp, dst.Join(req.DstDir, src.Base(sp))); err != nil {
+				return "", err
+			}
+		}
 	}
 	id := newID()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -395,6 +493,26 @@ func (a *App) FsTransfer(req TransferRequest) (string, error) {
 	return id, nil
 }
 
+// overlap refuses copying a path onto itself or into its own subtree.
+func overlap(local bool, sp, dp string) error {
+	eq := func(a, b string) bool { return a == b }
+	sep := "/"
+	if local {
+		sp, dp, sep = filepath.Clean(sp), filepath.Clean(dp), string(filepath.Separator)
+		eq = strings.EqualFold
+	} else {
+		sp, dp = path.Clean(sp), path.Clean(dp)
+	}
+	if eq(sp, dp) {
+		return errors.New("source and destination are the same")
+	}
+	prefix := strings.TrimSuffix(sp, sep) + sep
+	if len(dp) > len(prefix) && eq(dp[:len(prefix)], prefix) {
+		return errors.New("the destination is inside the source folder")
+	}
+	return nil
+}
+
 func (a *App) CancelTransfer(id string) {
 	a.files.mu.Lock()
 	cancel := a.files.transfers[id]
@@ -441,8 +559,18 @@ func copyTree(ctx context.Context, src fileSystem, sp string, dst fileSystem, dp
 		if err != nil {
 			return err
 		}
+		_, toLocal := dst.(localFS)
 		for _, e := range ents {
-			if err := copyTree(ctx, src, e.Path, dst, dst.Join(dp, e.Name), prog, tick); err != nil {
+			child := dst.Join(dp, e.Name)
+			if toLocal {
+				if err := safeName(e.Name); err != nil {
+					return err
+				}
+				if rel, err := filepath.Rel(dp, child); err != nil || strings.HasPrefix(rel, "..") {
+					return fmt.Errorf("unsafe file name %q", e.Name)
+				}
+			}
+			if err := copyTree(ctx, src, e.Path, dst, child, prog, tick); err != nil {
 				return err
 			}
 		}
@@ -454,21 +582,27 @@ func copyTree(ctx context.Context, src fileSystem, sp string, dst fileSystem, dp
 		return err
 	}
 	defer in.Close()
-	out, err := dst.Create(dp)
+	// Write beside the target and swap it in at the end, so a failed or
+	// cancelled copy never leaves a truncated file in place of the original.
+	tmp := dp + ".remterm-part"
+	out, err := dst.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", dp, err)
+	}
+	fail := func(err error) error {
+		out.Close()
+		_ = dst.RemoveAll(tmp)
+		return err
 	}
 	buf := make([]byte, 256*1024)
 	for {
 		if ctx.Err() != nil {
-			out.Close()
-			return ctx.Err()
+			return fail(ctx.Err())
 		}
 		n, rerr := in.Read(buf)
 		if n > 0 {
 			if _, werr := out.Write(buf[:n]); werr != nil {
-				out.Close()
-				return werr
+				return fail(werr)
 			}
 			prog.BytesDone += int64(n)
 			tick()
@@ -477,12 +611,16 @@ func copyTree(ctx context.Context, src fileSystem, sp string, dst fileSystem, dp
 			break
 		}
 		if rerr != nil {
-			out.Close()
-			return rerr
+			return fail(rerr)
 		}
 	}
 	if err := out.Close(); err != nil {
+		_ = dst.RemoveAll(tmp)
 		return err
+	}
+	if err := dst.Rename(tmp, dp); err != nil {
+		_ = dst.RemoveAll(tmp)
+		return fmt.Errorf("write %s: %w", dp, err)
 	}
 	// Keep permissions between servers only: Windows reports 0666 for every file.
 	if _, ok := src.(*remoteFS); ok {
@@ -506,6 +644,9 @@ func (a *App) FsOpen(id, p string) error {
 	}
 	f, err := a.fsGet(id)
 	if err != nil {
+		return err
+	}
+	if err := safeName(f.Base(p)); err != nil {
 		return err
 	}
 	dir, err := os.MkdirTemp("", "remterm-edit-")

@@ -15,6 +15,7 @@ class TransferStore {
   private items = new Map<string, TransferInfo>();
   private listeners = new Set<() => void>();
   private doneListeners = new Set<DoneListener>();
+  private pending = new Map<string, TransferProgress>(); // events for ids start() has not registered yet
   private wired = false;
   version = 0;
 
@@ -23,7 +24,13 @@ class TransferStore {
     this.wired = true;
     events.transfer((p) => {
       const t = this.items.get(p.id);
-      if (!t) return;
+      if (!t) {
+        // Can arrive before fsTransfer resolves; start() applies it.
+        this.pending.delete(p.id);
+        this.pending.set(p.id, p);
+        if (this.pending.size > 50) this.pending.delete(this.pending.keys().next().value!);
+        return;
+      }
       Object.assign(t, p);
       if (p.state === 'done') this.doneListeners.forEach((f) => f(t.dstFs, t.dstDir));
       this.changed();
@@ -58,7 +65,7 @@ class TransferStore {
     this.wire();
     const id = await api.fsTransfer({ srcFs, paths, dstFs, dstDir });
     if (!this.items.has(id)) {
-      this.items.set(id, {
+      const t: TransferInfo = {
         id,
         state: 'running',
         label: paths.length === 1 ? (paths[0].split(/[\\/]/).pop() ?? '') : `${paths.length} items`,
@@ -72,7 +79,14 @@ class TransferStore {
         dstFs,
         dstDir,
         started: Date.now(),
-      });
+      };
+      this.items.set(id, t);
+      const early = this.pending.get(id);
+      if (early) {
+        this.pending.delete(id);
+        Object.assign(t, early);
+        if (early.state === 'done') this.doneListeners.forEach((f) => f(dstFs, dstDir));
+      }
       this.changed();
     }
     return id;

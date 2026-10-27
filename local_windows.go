@@ -87,7 +87,7 @@ func (a *App) OpenLocal(req LocalRequest) error {
 	}
 	// CHERE_INVOKING keeps Git Bash's login profile from jumping to $HOME.
 	env := append(os.Environ(), "TERM_PROGRAM=Remterm", "COLORTERM=truecolor", "CHERE_INVOKING=1")
-	cols, rows := clamp(req.Cols, 20, 1000, 80), clamp(req.Rows, 5, 500, 24)
+	cols, rows := clamp(req.Cols, 2, 1000, 80), clamp(req.Rows, 1, 500, 24)
 	cpty, err := conpty.Start(command,
 		conpty.ConPtyDimensions(cols, rows),
 		conpty.ConPtyWorkDir(dir),

@@ -27,6 +27,7 @@ export function HistoryList(props: {
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setSel(items.length - 1), [query]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setSel((s) => Math.min(s, items.length - 1)), [items]); // e.g. after Shift+Del
   useEffect(() => {
     listRef.current?.querySelector('.hitem.sel')?.scrollIntoView({ block: 'nearest' });
   }, [sel, items]);

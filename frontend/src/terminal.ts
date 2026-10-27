@@ -47,6 +47,7 @@ export class TermSession {
   private unregister?: () => void;
   private connected = false;
   private disposed = false;
+  private inFlight = false; // an openLocal/connect call is running
   private state: TabStatus = 'connecting';
   private retries = 0;
   private retryTimer?: number;
@@ -86,7 +87,10 @@ export class TermSession {
       if (this.connected && this.sessionId) api.resize(this.sessionId, cols, rows).catch(() => {});
     });
     this.term.attachCustomKeyEventHandler((e) => this.onKey(e));
-    this.tracker = new LineTracker(this.term, () => this.historyKey, (d) => this.send(d));
+    // Through events.input like typed keys, so accepted suggestions are broadcast too.
+    this.tracker = new LineTracker(this.term, () => this.historyKey, (d) => {
+      if (!this.events.input(d)) this.send(d);
+    });
   }
 
   get isLocal() {
@@ -144,7 +148,8 @@ export class TermSession {
     }
     this.term.textarea?.addEventListener('focus', () => this.events.focused());
     // Right-click: copy when there is a selection, otherwise paste.
-    el.addEventListener('contextmenu', (e) => {
+    // On the terminal's own element so it survives a move to another host element.
+    this.term.element?.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       if (this.term.hasSelection()) this.copySelection();
       else this.paste();
@@ -196,6 +201,7 @@ export class TermSession {
   }
 
   reconnect() {
+    if (this.inFlight) return;
     this.retries = 0;
     const old = this.sessionId;
     this.sessionId = null; // ignore the close event of the old session
@@ -242,6 +248,7 @@ export class TermSession {
     });
 
     let result: ConnectResult | null = null;
+    this.inFlight = true;
     try {
       const t = this.target;
       if (t.kind === 'sftp' || t.kind === 'log' || t.kind === 'rdp') throw new Error('not a terminal');
@@ -265,6 +272,7 @@ export class TermSession {
         });
       }
     } catch (e) {
+      this.inFlight = false;
       if (this.sessionId !== id || this.disposed) return;
       this.unregister?.();
       this.unregister = undefined;
@@ -286,7 +294,12 @@ export class TermSession {
       return this.fail(cleanError(msg));
     }
 
-    if (this.sessionId !== id || this.disposed) return;
+    this.inFlight = false;
+    if (this.sessionId !== id || this.disposed) {
+      // Closed or replaced while connecting: the backend session is live now, end it.
+      api.disconnect(id).catch(() => {});
+      return;
+    }
     if (this.retries > 0) this.notice('Reconnected', 32);
     this.connected = true;
     this.retries = 0;
@@ -355,7 +368,7 @@ export class TermSession {
       if (!this.events.input(d)) this.send(d);
       return;
     }
-    if (d === '\r' && (this.state === 'disconnected' || this.state === 'reconnecting')) {
+    if (d === '\r' && !this.inFlight && (this.state === 'disconnected' || this.state === 'reconnecting')) {
       this.retries = 0;
       void this.connect();
     }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -92,16 +94,33 @@ func (a *App) connectHost(h Host, password string, seen map[string]bool) (*sshCo
 			conn.Close()
 			return nil, err
 		}
-		_ = raw.SetDeadline(time.Now().Add(30 * time.Second)) // handshake budget
 	}
 
+	// Handshake budget for both branches (a jump-host channel has no
+	// deadlines); paused while the host-key dialog waits for the user.
+	var timedOut atomic.Bool
+	t := time.AfterFunc(30*time.Second, func() { timedOut.Store(true); raw.Close() })
+	cfg.HostKeyCallback = a.hostKeyCallback(func(paused bool) {
+		if paused {
+			t.Stop()
+		} else {
+			t.Reset(30 * time.Second)
+		}
+	})
 	c, chans, reqs, err := ssh.NewClientConn(raw, addr, cfg)
+	t.Stop()
+	if err == nil && timedOut.Load() {
+		c.Close()
+		err = errors.New("handshake timed out")
+	}
 	if err != nil {
 		raw.Close()
 		conn.Close()
+		if timedOut.Load() {
+			return nil, fmt.Errorf("%s did not complete the SSH handshake within 30 seconds", addr)
+		}
 		return nil, wrapDialErr(err)
 	}
-	_ = raw.SetDeadline(time.Time{})
 	conn.client = ssh.NewClient(c, chans, reqs)
 	return conn, nil
 }
@@ -152,7 +171,14 @@ func (a *App) dialFirstHop(h Host, addr string) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		c, err := dialer.Dial("tcp", addr)
+		var c net.Conn
+		if cd, ok := dialer.(proxy.ContextDialer); ok { // bounds the SOCKS5 handshake too
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			c, err = cd.DialContext(ctx, "tcp", addr)
+		} else {
+			c, err = dialer.Dial("tcp", addr)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("SOCKS5 proxy %s: %w", paddr, err)
 		}
@@ -324,7 +350,7 @@ func (a *App) clientConfig(h Host, secret string) (*ssh.ClientConfig, authState,
 	return &ssh.ClientConfig{
 		User:            username,
 		Auth:            methods,
-		HostKeyCallback: a.hostKeyCallback(),
+		HostKeyCallback: a.hostKeyCallback(nil), // connectHost replaces it with one that pauses the handshake timer
 		Timeout:         15 * time.Second,
 	}, st, nil
 }

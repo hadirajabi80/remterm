@@ -240,6 +240,9 @@ func (a *App) SaveGroup(g GroupConfig, proxyPassword string) (GroupConfig, error
 			g.Proxy.HasSecret = true
 		}
 	}
+	if g.Proxy == nil {
+		deleteNamedSecret("proxy:group:" + g.Path)
+	}
 	return g, a.store.withLock(func(d *storeData) { d.Groups = upsert(d.Groups, g, groupPath) })
 }
 
@@ -259,14 +262,32 @@ func (a *App) RenameGroup(oldPath, newPath string) error {
 		}
 		return p, false
 	}
-	return a.store.withLock(func(d *storeData) {
+	var oldPaths []string
+	a.store.read(func(d *storeData) {
+		for _, g := range d.Groups {
+			oldPaths = append(oldPaths, g.Path)
+		}
+	})
+	if err := a.store.withLock(func(d *storeData) {
 		for i := range d.Hosts {
 			d.Hosts[i].Group, _ = move(d.Hosts[i].Group)
 		}
 		for i := range d.Groups {
 			d.Groups[i].Path, _ = move(d.Groups[i].Path)
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	// Group proxy passwords are keyed by path; carry them along.
+	for _, p := range oldPaths {
+		if np, ok := move(p); ok && np != p {
+			if v := getNamedSecret("proxy:group:" + p); v != "" {
+				_ = setNamedSecret("proxy:group:"+np, v)
+				deleteNamedSecret("proxy:group:" + p)
+			}
+		}
+	}
+	return nil
 }
 
 // DeleteGroup removes a group's settings; its hosts move to the parent group.
@@ -276,6 +297,7 @@ func (a *App) DeleteGroup(path string) error {
 	if i := strings.LastIndex(path, "/"); i >= 0 {
 		parent = path[:i]
 	}
+	deleteNamedSecret("proxy:group:" + path) // subgroup settings stay, and so do theirs
 	return a.store.withLock(func(d *storeData) {
 		for i := range d.Hosts {
 			if d.Hosts[i].Group == path {

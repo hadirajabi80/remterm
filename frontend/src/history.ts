@@ -18,11 +18,14 @@ export interface HistoryItem {
 
 // Mirrors the backend filter: credentials-looking commands are never stored,
 // and a leading space means "don't record" (shell convention).
-const SECRET_RE = /(pass(word|wd)?|secret|token|api[_-]?key)\s*[=:]\s*\S|--?(password|passwd|token|secret)[=\s]\S/i;
+// Keep identical to secretRe in cmdhistory.go.
+const SECRET_RE =
+  /\w*(pass(word|wd|phrase)?|secret|token|api[_-]?key)\w*\s*[=:]\s*\S|(^|\s)--?(password|passwd|passphrase|token|secret|api[-_]?key)[=\s]\S|\b(authorization|bearer)\s*:?\s+\S|\b(mysql|mysqldump|mariadb|sshpass)\b.*\s-p\S*|\bdocker\s+login\b.*\s-p\s*\S|(^|\s)-u\s+[^\s:]+:\S|:\/\/[^\/\s:@]+:[^@\s\/]+@|\bhtpasswd\b.*\s-b\b/i;
 
 export function isRecordable(cmd: string): boolean {
   const t = cmd.trim();
-  return t.length > 0 && t.length <= 2000 && !cmd.startsWith(' ') && !SECRET_RE.test(t);
+  const len = Array.from(t).length; // code points, like the backend's rune count
+  return len > 0 && len <= 2000 && !cmd.startsWith(' ') && !SECRET_RE.test(t);
 }
 
 /** User preferences read by terminals while typing. */

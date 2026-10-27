@@ -112,7 +112,9 @@ export function ConnectionsPanel({ ctx, rdp }: { ctx: SidebarCtx; rdp: RdpCtx })
   const folderColor = (path: string) => colorCss(ctx.colors[sshGroupKey(path)]) ?? colorCss(rdp.colors[rdpGroupKey(path)]);
   const connectFolder = (f: Folder) => {
     const items = allItems(f);
-    if (items.some((it) => it.kind === 'ssh')) ctx.connectGroup(f.path);
+    // Only what the folder shows (search and SSH/RDP filter applied).
+    const hs = items.flatMap((it) => (it.kind === 'ssh' ? [it.host] : []));
+    if (hs.length) ctx.connectHosts(hs);
     const ms = items.flatMap((it) => (it.kind === 'rdp' ? [it.machine] : []));
     if (ms.length) rdp.connectAll(ms);
   };
@@ -153,6 +155,7 @@ export function ConnectionsPanel({ ctx, rdp }: { ctx: SidebarCtx; rdp: RdpCtx })
           title={`${h.name}\n${hostLabel(h)}\n\nDouble-click or Enter to connect · right-click for more`}
           onDoubleClick={() => open(it)}
           onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return; // keys on the row's buttons are theirs
             if (e.key === 'Enter') open(it);
             else if (e.key === 'F2') ctx.editHost(h);
           }}
@@ -197,6 +200,7 @@ export function ConnectionsPanel({ ctx, rdp }: { ctx: SidebarCtx; rdp: RdpCtx })
         title={`${m.name}\n${machineDetail(m)}${m.notes ? '\n\n' + m.notes : ''}\n\nDouble-click or Enter to connect · right-click for more`}
         onDoubleClick={() => open(it)}
         onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return; // keys on the row's buttons are theirs
           if (e.key === 'Enter') open(it);
           else if (e.key === 'F2') rdp.edit(m);
           else if (e.key === 'Delete') rdp.remove([m], `"${m.name}"`);

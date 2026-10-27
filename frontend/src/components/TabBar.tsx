@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { typingPrefs } from '../history';
 import type { LocalShell, TabStatus } from '../types';
 import { Icon } from './Icon';
 import { Menu, type MenuItem } from './Menu';
@@ -59,10 +60,18 @@ export function TabBar(props: {
     if (props.draggingKey) endHover();
   }, [props.draggingKey]);
   const hovered = hover && props.tabs.find((t) => t.key === hover.key);
+  // Keep the active tab visible when the strip overflows (its scrollbar is hidden).
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!props.activeKey) return;
+    tabsRef.current?.querySelector(`[data-tab-key="${CSS.escape(props.activeKey)}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [props.activeKey, props.tabs.length]);
+  // Ctrl+Shift+` opens the default shell (the first one when none is set).
+  const defaultShell = props.shells.find((s) => s.id === typingPrefs.defaultShell)?.id ?? props.shells[0]?.id;
   const menuItems: (MenuItem | 'sep')[] = [
-    ...props.shells.map((s, i) => ({
+    ...props.shells.map((s) => ({
       label: s.name,
-      hint: i === 0 ? 'Ctrl+Shift+`' : undefined,
+      hint: s.id === defaultShell ? 'Ctrl+Shift+`' : undefined,
       icon: <Icon name="terminal" size={14} />,
       onClick: () => props.onNewLocal(s.id),
     })),
@@ -76,7 +85,15 @@ export function TabBar(props: {
       <button className="icon-btn" title="Toggle sidebar (Ctrl+Shift+B)" onClick={props.onToggleSidebar}>
         <Icon name="sidebar" />
       </button>
-      <div className="tabs" role="tablist">
+      <div
+        className="tabs"
+        role="tablist"
+        ref={tabsRef}
+        onWheel={(e) => {
+          const el = e.currentTarget;
+          if (el.scrollWidth > el.clientWidth) el.scrollLeft += e.deltaY;
+        }}
+      >
         {props.tabs.map((t, i) => (
           <div
             key={t.key}

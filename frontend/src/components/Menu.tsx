@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { GROUP_COLORS } from '../colors';
 import { useCoverRect } from '../rdp';
+import { useOverlayEscape } from './Modal';
 
 export interface MenuItem {
   label: string;
@@ -46,25 +47,21 @@ export function Menu({
     setPos({ x: Math.min(at.x, window.innerWidth - r.width - 6), y: Math.min(at.y, window.innerHeight - r.height - 6) });
   }, [at]);
 
+  useOverlayEscape(onClose);
   useEffect(() => {
     const down = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
+      if (ref.current?.contains(e.target as Node)) return;
+      // The anchor holds the toggle button: let its click close the menu.
+      if (!at && ref.current?.parentElement?.contains(e.target as Node)) return;
+      onClose();
     };
     window.addEventListener('mousedown', down, true);
-    window.addEventListener('keydown', key, true);
     window.addEventListener('blur', onClose);
     return () => {
       window.removeEventListener('mousedown', down, true);
-      window.removeEventListener('keydown', key, true);
       window.removeEventListener('blur', onClose);
     };
-  }, [onClose]);
+  }, [onClose, at]);
 
   return (
     <div

@@ -41,37 +41,52 @@ func knownHostsPath() (string, error) {
 }
 
 // hostKeyCallback accepts known keys, asks before trusting a new host, and
-// refuses outright when a known host presents a different key.
-func (a *App) hostKeyCallback() ssh.HostKeyCallback {
-	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-		knownHostsMu.Lock()
-		defer knownHostsMu.Unlock()
-
-		path, err := knownHostsPath()
-		if err != nil {
-			return err
-		}
+// refuses outright when a known host presents a different key. pause (may be
+// nil) stops the caller's handshake timer while the question is open.
+func (a *App) hostKeyCallback(pause func(bool)) ssh.HostKeyCallback {
+	// verify reports nil for a known key, the KeyError for an unknown host,
+	// or an error that refuses the connection.
+	verify := func(path, hostname string, remote net.Addr, key ssh.PublicKey) (*knownhosts.KeyError, error) {
 		check, err := knownhosts.New(path)
 		if err != nil {
-			return fmt.Errorf("read known_hosts: %w", err)
+			return nil, fmt.Errorf("read known_hosts: %w", err)
 		}
 		err = check(hostname, remote, key)
 		if err == nil {
-			return nil
+			return nil, nil
 		}
 		var ke *knownhosts.KeyError
 		if !errors.As(err, &ke) {
-			return err
+			return nil, err
 		}
 		for _, w := range ke.Want {
 			if w.Key.Type() == key.Type() {
-				return fmt.Errorf("HOST KEY CHANGED for %s — possible man-in-the-middle attack.\n"+
+				return nil, fmt.Errorf("HOST KEY CHANGED for %s — possible man-in-the-middle attack.\n"+
 					"Server now presents %s %s.\n"+
 					"If the server was reinstalled, remove line %d from %s and reconnect.",
 					hostname, key.Type(), ssh.FingerprintSHA256(key), w.Line, w.Filename)
 			}
 		}
+		return ke, nil
+	}
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		// The lock is not held while the dialog is open, so other connections
+		// and the known-hosts list are not blocked by an unanswered question.
+		knownHostsMu.Lock()
+		path, err := knownHostsPath()
+		var ke *knownhosts.KeyError
+		if err == nil {
+			ke, err = verify(path, hostname, remote, key)
+		}
+		knownHostsMu.Unlock()
+		if err != nil || ke == nil {
+			return err
+		}
 
+		if pause != nil {
+			pause(true)
+			defer pause(false)
+		}
 		answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
 			Type:  wruntime.QuestionDialog,
 			Title: "Verify host key",
@@ -87,6 +102,12 @@ func (a *App) hostKeyCallback() ssh.HostKeyCallback {
 			return errors.New("host key not trusted")
 		}
 
+		knownHostsMu.Lock()
+		defer knownHostsMu.Unlock()
+		// Another connection may have added this host while the dialog was open.
+		if ke, err = verify(path, hostname, remote, key); err != nil || ke == nil {
+			return err
+		}
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
@@ -148,6 +169,16 @@ func hostKeyAlgorithms(addr string) []string {
 			add(t)
 		}
 	}
+	if len(algos) == 0 {
+		return nil
+	}
+	// Known types first, then the rest: a server that dropped its old key
+	// type still connects and gets the "HOST KEY CHANGED" check instead of a
+	// bare "no common algorithm".
+	add(ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521,
+		ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA,
+		ssh.CertAlgoED25519v01, ssh.CertAlgoECDSA256v01, ssh.CertAlgoECDSA384v01, ssh.CertAlgoECDSA521v01,
+		ssh.CertAlgoRSASHA512v01, ssh.CertAlgoRSASHA256v01, ssh.CertAlgoRSAv01)
 	return algos
 }
 

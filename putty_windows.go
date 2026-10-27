@@ -29,7 +29,7 @@ func (a *App) ImportPuTTY() (int, error) {
 	}
 	added := 0
 	for _, enc := range names {
-		name, _ := url.QueryUnescape(enc)
+		name, _ := url.PathUnescape(enc) // PuTTY escapes with %XX only; "+" is literal
 		if name == "Default Settings" || existing[strings.ToLower(name)] {
 			continue
 		}
@@ -51,7 +51,13 @@ func (a *App) ImportPuTTY() (int, error) {
 			h.Protocol = "telnet"
 		case "serial":
 			h.Protocol = "serial"
-			h.Serial = &SerialConfig{Port: str("SerialLine"), Baud: num("SerialSpeed"), DataBits: num("SerialDataBits")}
+			h.Serial = &SerialConfig{Port: str("SerialLine"), Baud: num("SerialSpeed"), DataBits: num("SerialDataBits"),
+				Parity:      map[int]string{0: "none", 1: "odd", 2: "even", 3: "mark", 4: "space"}[num("SerialParity")],
+				StopBits:    map[int]string{2: "1", 3: "1.5", 4: "2"}[num("SerialStopHalfbits")],
+				FlowControl: "none"}
+			if num("SerialFlowControl") == 2 {
+				h.Serial.FlowControl = "rts/cts"
+			}
 			if h.Address == "" {
 				h.Address = h.Serial.Port
 			}
@@ -65,7 +71,12 @@ func (a *App) ImportPuTTY() (int, error) {
 			continue
 		}
 		if h.Port == 0 {
-			h.Port = 22
+			switch h.Protocol {
+			case "telnet":
+				h.Port = 23
+			case "":
+				h.Port = 22
+			} // serial has no port number
 		}
 		if err := a.store.PutHost(h); err != nil {
 			return added, err

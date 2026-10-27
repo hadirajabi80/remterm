@@ -1297,7 +1297,7 @@ select.input {
   border-radius: 7px;
   background: var(--term-bg);
   border: 1px solid var(--border);
-  color: #c9d4e6;
+  color: var(--term-fg, #c9d4e6);
   font-size: 11.5px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -3308,7 +3308,7 @@ body.tab-dragging * {
 }
 .fill-item.sel .fill-num {
   background: var(--accent);
-  color: #fff;
+  color: #0a0d12;
 }
 .fill-ico {
   flex: none;
@@ -3463,6 +3463,9 @@ body.tab-dragging * {
 .mini-badge.kind.rdp {
   color: #bb9af7;
   background: rgba(187, 154, 247, 0.14);
+}
+:root[data-theme='light'] .mini-badge.kind.rdp {
+  color: #7c4dcc;
 }
 .row-title .mini-badge.kind {
   opacity: 0.85;

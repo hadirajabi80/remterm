@@ -38,6 +38,9 @@ func cwdFromArgs(args []string) string {
 	if p == "" {
 		return ""
 	}
+	if len(p) == 2 && p[1] == ':' && (p[0]|0x20 >= 'a' && p[0]|0x20 <= 'z') {
+		p += `\` // `--cwd "C:\"` arrives as `C:"`; bare "C:" would be that drive's current folder
+	}
 	st, err := os.Stat(p)
 	if err != nil {
 		return ""
@@ -98,7 +101,29 @@ func (a *App) onSecondInstance(data options.SecondInstanceData) {
 	wruntime.WindowShow(a.ctx)
 	wruntime.WindowSetAlwaysOnTop(a.ctx, true)
 	wruntime.WindowSetAlwaysOnTop(a.ctx, false)
-	if cwd := cwdFromArgs(data.Args); cwd != "" {
+	// Relative paths belong to the second instance's folder, not ours.
+	args := append([]string(nil), data.Args...)
+	if data.WorkingDirectory != "" {
+		rel := func(v string) string {
+			v = strings.Trim(strings.TrimSpace(v), `"`)
+			if v == "" || filepath.IsAbs(v) || filepath.VolumeName(v) != "" || os.IsPathSeparator(v[0]) {
+				return v
+			}
+			return filepath.Join(data.WorkingDirectory, v)
+		}
+		for i := 0; i < len(args); i++ {
+			switch a := args[i]; {
+			case a == "--cwd" && i+1 < len(args):
+				args[i+1] = rel(args[i+1])
+				i++
+			case strings.HasPrefix(a, "--cwd="):
+				args[i] = "--cwd=" + rel(strings.TrimPrefix(a, "--cwd="))
+			case !strings.HasPrefix(a, "-"):
+				args[i] = rel(a)
+			}
+		}
+	}
+	if cwd := cwdFromArgs(args); cwd != "" {
 		a.emit("launch:open", cwd)
 	}
 }

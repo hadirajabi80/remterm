@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -34,6 +37,7 @@ type UpdateInfo struct {
 	Asset     string `json:"asset"` // file for this system
 	URL       string `json:"url"`
 	Size      int64  `json:"size"`
+	Digest    string `json:"digest"` // "sha256:<hex>" when GitHub publishes one
 }
 
 func (a *App) AppVersion() string { return appVersion }
@@ -58,9 +62,10 @@ func (a *App) CheckUpdate() (UpdateInfo, error) {
 		Body    string `json:"body"`
 		HTMLURL string `json:"html_url"`
 		Assets  []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-			Size int64  `json:"size"`
+			Name   string `json:"name"`
+			URL    string `json:"browser_download_url"`
+			Size   int64  `json:"size"`
+			Digest string `json:"digest"`
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&rel); err != nil {
@@ -72,10 +77,10 @@ func (a *App) CheckUpdate() (UpdateInfo, error) {
 	want := updateAssetPattern()
 	for _, as := range rel.Assets {
 		if want != nil && want.MatchString(as.Name) {
-			info.Asset, info.URL, info.Size = as.Name, as.URL, as.Size
+			info.Asset, info.URL, info.Size, info.Digest = as.Name, as.URL, as.Size, as.Digest
 		}
 	}
-	info.Newer = appVersion != "dev" && newerVersion(info.Latest, appVersion)
+	info.Newer = appVersion != "dev" && want != nil && newerVersion(info.Latest, appVersion)
 	info.Available = info.URL != "" && info.Newer
 	return info, nil
 }
@@ -96,10 +101,10 @@ func newerVersion(a, b string) bool {
 	for i := 0; i < len(pa) || i < len(pb); i++ {
 		var x, y int
 		if i < len(pa) {
-			x, _ = strconv.Atoi(pa[i])
+			x = leadingInt(pa[i])
 		}
 		if i < len(pb) {
-			y, _ = strconv.Atoi(pb[i])
+			y = leadingInt(pb[i])
 		}
 		if x != y {
 			return x > y
@@ -107,6 +112,26 @@ func newerVersion(a, b string) bool {
 	}
 	return false
 }
+
+// leadingInt reads the number a version part starts with: "1-hotfix" is 1.
+func leadingInt(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
+// updateClient downloads updates; download's watchdog cuts a stalled transfer.
+var updateClient = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   15 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
+}}
 
 // InstallUpdate downloads the latest release for this system, installs it and restarts Remterm.
 // Progress goes to the UI as "update:progress" events (0–100).
@@ -123,16 +148,34 @@ func (a *App) InstallUpdate() error {
 		return err
 	}
 	file := filepath.Join(dir, info.Asset)
-	if err := a.download(info.URL, file, info.Size); err != nil {
+	if err := a.download(info.URL, file, info.Size, info.Digest); err != nil {
+		_ = os.RemoveAll(dir)
 		return fmt.Errorf("download %s: %w", info.Asset, err)
 	}
 	a.emit("update:progress", 100, "Installing…")
-	return a.installUpdate(file)
+	if err := a.installUpdate(file); err != nil {
+		_ = os.RemoveAll(dir)
+		return err
+	}
+	return nil // the setup runs from dir: keep it
 }
 
-func (a *App) download(url, path string, size int64) error {
-	res, err := http.Get(url)
+func (a *App) download(url, path string, size int64, digest string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const idle = 45 * time.Second
+	stall := time.AfterFunc(idle, cancel) // no data for this long: give up
+	defer stall.Stop()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Remterm/"+appVersion)
+	res, err := updateClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return errors.New("download stalled")
+		}
 		return err
 	}
 	defer res.Body.Close()
@@ -147,13 +190,16 @@ func (a *App) download(url, path string, size int64) error {
 		return err
 	}
 	defer f.Close()
+	h := sha256.New()
+	w := io.MultiWriter(f, h)
 	buf := make([]byte, 256<<10)
 	var done int64
 	last := -1
 	for {
 		n, err := res.Body.Read(buf)
 		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
+			stall.Reset(idle)
+			if _, werr := w.Write(buf[:n]); werr != nil {
 				return werr
 			}
 			done += int64(n)
@@ -168,11 +214,17 @@ func (a *App) download(url, path string, size int64) error {
 			break
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return errors.New("download stalled")
+			}
 			return err
 		}
 	}
 	if size > 0 && done != size {
 		return fmt.Errorf("incomplete download (%d of %d bytes)", done, size)
+	}
+	if want, ok := strings.CutPrefix(digest, "sha256:"); ok && !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), want) {
+		return fmt.Errorf("checksum mismatch for %s", filepath.Base(path))
 	}
 	return nil
 }

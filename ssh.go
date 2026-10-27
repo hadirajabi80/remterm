@@ -92,7 +92,7 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 		return ConnectResult{}, err
 	}
 
-	cols, rows := clamp(req.Cols, 20, 1000, 80), clamp(req.Rows, 5, 500, 24)
+	cols, rows := clamp(req.Cols, 2, 1000, 80), clamp(req.Rows, 1, 500, 24)
 	sess, stdin, stdout, stderr, err := openShell(conn, cols, rows)
 	if err != nil {
 		conn.Close()
@@ -199,7 +199,7 @@ func (a *App) Resize(id string, cols, rows int) error {
 	if s == nil {
 		return nil
 	}
-	return s.resize(clamp(cols, 20, 1000, 80), clamp(rows, 5, 500, 24))
+	return s.resize(clamp(cols, 2, 1000, 80), clamp(rows, 1, 500, 24))
 }
 
 func (a *App) Disconnect(id string) {
