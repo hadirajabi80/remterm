@@ -13,6 +13,13 @@ internal static class KeyTyper
     private const int V = 0x2F;
     public const int Tab = 0x0F;
     public const int Enter = 0x1C;
+    public const int CapsLock = 0x3A;
+
+    /// <summary>CapsLock flips the case of every letter typed (Shift+a gives 'a'), so typing must happen with it off.</summary>
+    public static bool CapsLockOn => (GetKeyState(0x14 /* VK_CAPITAL */) & 1) != 0;
+
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
 
     /// <summary>Ctrl+A, so the text typed next replaces whatever is already in the focused field.</summary>
     public static void AppendSelectAll(List<(int sc, bool up)> keys)

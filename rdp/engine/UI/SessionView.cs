@@ -697,7 +697,7 @@ internal sealed class SessionView : UserControl
         }
         if (!keepWatching) StopAutoType();
         _typing = true;
-        bool ok = true, pasted = false;
+        bool ok = true, pasted = false, caps = false;
         bool type = _store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(login + password, out _);
         Diag.Log($"[{Machine.Name}] FILL ({(type ? "keys" : "clipboard")}) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
         try
@@ -710,6 +710,7 @@ internal sealed class SessionView : UserControl
 
             if (type)
             {
+                caps = await CapsLockOffForTyping();
                 ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(login));
                 await Task.Delay(150);
                 ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
@@ -738,6 +739,7 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
+            RestoreCapsLock(caps);
             if (pasted) ClearClipboard();
             _typing = false;
         }
@@ -757,12 +759,13 @@ internal sealed class SessionView : UserControl
         }
         StopAutoType(); // the last screen there is to fill
         _typing = true;
-        bool ok = true, pasted = false;
+        bool ok = true, pasted = false, caps = false;
         try
         {
             if (!await PrepareInput()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
             if (_store.Data.Settings.ForceUsKeyboard && KeyTyper.CanType(password, out _))
             {
+                caps = await CapsLockOffForTyping();
                 ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
                 await Task.Delay(150);
                 ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
@@ -782,6 +785,7 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
+            RestoreCapsLock(caps);
             if (pasted) ClearClipboard();
             _typing = false;
         }
@@ -832,6 +836,25 @@ internal sealed class SessionView : UserControl
         SendKeysRobust(KeyTyper.KeyPress(0x2A)); // Shift tap (harmless)
         await Task.Delay(200);
         return _rdp != null && IsConnected;
+    }
+
+    /// <summary>
+    /// With CapsLock on, every typed letter came out in the wrong case (the session applies CapsLock to
+    /// our scancodes too). Taps it off for the typing; returns whether to tap it back on with <see cref="RestoreCapsLock"/>.
+    /// </summary>
+    private async Task<bool> CapsLockOffForTyping()
+    {
+        if (!KeyTyper.CapsLockOn) return false;
+        Diag.Log($"[{Machine.Name}] CapsLock is on: switching it off while typing");
+        SendKeysRobust(KeyTyper.KeyPress(KeyTyper.CapsLock));
+        await Task.Delay(120);
+        return true;
+    }
+
+    private void RestoreCapsLock(bool wasOn)
+    {
+        if (!wasOn || _rdp == null || !IsConnected) return;
+        try { SendKeysRobust(KeyTyper.KeyPress(KeyTyper.CapsLock)); } catch { /* ignore */ }
     }
 
     /// <summary>Sends keys a few characters at a time, letting the session take in each group before the next.</summary>
@@ -893,7 +916,7 @@ internal sealed class SessionView : UserControl
 
         Diag.Log($"[{Machine.Name}] TYPING login=\"{login}\" (password {password.Length} chars) seq=\"{sequence}\"");
         _typing = true;
-        bool anyFailed = false;
+        bool anyFailed = false, caps = false;
         try
         {
             if (!FocusSession())
@@ -909,6 +932,7 @@ internal sealed class SessionView : UserControl
             const int shift = 0x2A;
             try { KeyTyper.SendInputKeys(new List<(int sc, bool up)> { (shift, false), (shift, true) }); } catch { /* ignore */ }
             await Task.Delay(200);
+            caps = await CapsLockOffForTyping();
 
             foreach (var step in KeyTyper.Parse(sequence))
             {
@@ -934,6 +958,7 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
+            RestoreCapsLock(caps);
             _typing = false;
         }
         if (anyFailed) Notify?.Invoke(this, "Some keystrokes didn't go through — if the login is incomplete, press Ctrl+Alt+K again.");
