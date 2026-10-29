@@ -133,9 +133,18 @@ export function RdpView(props: {
     if (!visible) holeKey.current = ''; // the engine drops the cut-outs when hidden
   }, [visible]);
 
-  // Give the session the keyboard when its tab comes forward.
+  // Give the session the keyboard when its tab comes forward, and again when the window is
+  // worked in (nested RDP often hands the keyboard back to the web view on re-activation).
   useEffect(() => {
-    if (visible && props.active) void rdp.focus(id).catch(() => {});
+    if (!visible || !props.active) return;
+    void rdp.focus(id).catch(() => {});
+    const again = () => {
+      const el = document.activeElement;
+      if (el && el !== document.body && el !== document.documentElement) return; // typing in Remterm's own UI
+      void rdp.focus(id).catch(() => {});
+    };
+    window.addEventListener('focus', again);
+    return () => window.removeEventListener('focus', again);
   }, [visible, props.active, id]);
 
   const failed = !ready && pane.status === 'disconnected';

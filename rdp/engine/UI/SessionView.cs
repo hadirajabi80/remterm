@@ -513,7 +513,10 @@ internal sealed class SessionView : UserControl
 
     public void FocusRemote()
     {
-        if (_rdp != null && IsConnected) _rdp.Focus();
+        if (_rdp == null || !IsConnected) return;
+        // Cross-process safe: docked sessions live inside Remterm's web-view window, where a plain
+        // Focus() leaves the keyboard with the web view (keyboard "dead" until a click on the picture).
+        Win.FocusControl(_rdp);
     }
 
     // ---------------------------------------------------------------- auto-type
@@ -1032,11 +1035,14 @@ internal sealed class SessionView : UserControl
         {
             // Already typing into the session: moving the focus again between keys made it lose some.
             if (Win.GetForegroundWindow() == root && Win.Contains(_rdp, Win.FocusedWindow())) return true;
-            if (Win.GetForegroundWindow() != root) Win.SetForegroundWindow(root);
-            FindForm()?.Activate(); // our own pop-out window; embedded sessions have none
-            _rdp.Focus();
-            try { _rdp.Ocx.Focus(); } catch { /* not all versions expose it */ }
-            return Win.GetForegroundWindow() == root && Win.Contains(_rdp, Win.FocusedWindow());
+            for (int i = 0; i < 3; i++)
+            {
+                FindForm()?.Activate(); // our own pop-out window; embedded sessions have none
+                try { _rdp.Ocx.Focus(); } catch { /* not all versions expose it */ }
+                if (Win.FocusControl(_rdp)) return true;
+                Thread.Sleep(60); // foreground rights can need a moment after activation
+            }
+            return false;
         }
         catch
         {

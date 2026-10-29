@@ -236,9 +236,12 @@ export function WebRdpView(props: {
       comp.setAttribute('flexcenter', 'true');
       comp.setAttribute('flexcentre', 'true');
       comp.setAttribute('verbose', 'false');
+      comp.setAttribute('tabindex', '-1'); // programmatically focusable: without it .focus() can be a no-op
       (comp as any).module = iron.Backend;
       const ready = new Promise<any>((resolve) => comp!.addEventListener('ready', (e) => resolve((e as CustomEvent).detail.irgUserInteraction), { once: true }));
       win.document.body.appendChild(comp);
+      // A click anywhere in the session (letterbox bars included) puts the keyboard in it.
+      win.document.addEventListener('pointerdown', () => focus(), true);
       const user = await ready;
       if (cancelled) {
         user.shutdown();
@@ -495,10 +498,32 @@ export function WebRdpView(props: {
   const focus = () => {
     const f = host.current?.querySelector('iframe');
     f?.focus();
-    (f?.contentDocument?.querySelector('iron-remote-desktop') as HTMLElement | null)?.focus();
+    const comp = (f?.contentDocument?.querySelector('iron-remote-desktop') as HTMLElement | null) ?? null;
+    comp?.focus();
+    (comp?.shadowRoot?.querySelector('canvas') as HTMLElement | null)?.focus();
   };
   useEffect(() => {
-    if (props.active && status === 'connected') requestAnimationFrame(focus);
+    if (!props.active || status !== 'connected') return;
+    requestAnimationFrame(focus);
+    // Nested RDP and window switches leave the keyboard with nothing: pull it back into the
+    // session, but never away from a field of Remterm's own UI that holds the focus.
+    const again = () => {
+      const el = document.activeElement;
+      if (el && el !== document.body && el !== document.documentElement) return;
+      requestAnimationFrame(focus);
+    };
+    const wake = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return; // Remterm's shortcuts keep their keys
+      const el = document.activeElement;
+      if (el && el !== document.body && el !== document.documentElement) return;
+      focus(); // this first key may be lost; every following one reaches the session
+    };
+    window.addEventListener('focus', again);
+    window.addEventListener('keydown', wake, true);
+    return () => {
+      window.removeEventListener('focus', again);
+      window.removeEventListener('keydown', wake, true);
+    };
   }, [props.active, status]);
 
   useEffect(() => {

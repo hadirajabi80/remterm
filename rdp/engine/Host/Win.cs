@@ -34,6 +34,35 @@ internal static class Win
         if (c.IsHandleCreated) SetWindowPos(c.Handle, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
+    /// <summary>
+    /// Puts the keyboard focus on one of our controls, also when it is docked inside Remterm's
+    /// web-view window (another process). Plain Control.Focus() then only sets the focus within
+    /// our own input queue, so the keyboard stays with the web view — the session looks dead
+    /// until the user happens to click exactly on its picture. Attaching to the foreground
+    /// thread's queue for the call moves the real focus; nested RDP (input injected by an outer
+    /// session) is covered too, where SetForegroundWindow alone is regularly refused.
+    /// </summary>
+    public static bool FocusControl(Control c)
+    {
+        if (!c.IsHandleCreated) return false;
+        try
+        {
+            var root = Root(c);
+            var fg = GetForegroundWindow();
+            uint us = GetCurrentThreadId();
+            uint them = fg == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fg, out _);
+            bool attached = them != 0 && them != us && AttachThreadInput(us, them, true);
+            try
+            {
+                if (root != IntPtr.Zero && fg != IntPtr.Zero && fg != root) SetForegroundWindow(root);
+                SetFocus(c.Handle);
+            }
+            finally { if (attached) AttachThreadInput(us, them, false); }
+            return Contains(c, FocusedWindow());
+        }
+        catch { return false; }
+    }
+
     /// <summary>Wraps a foreign window handle so it can own our dialogs.</summary>
     public sealed class Owner(IntPtr handle) : IWin32Window
     {
@@ -72,6 +101,9 @@ internal static class Win
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr hwnd);
