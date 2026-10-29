@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { errorMessage } from '../api';
+import { errorMessage, rdpDownload } from '../api';
 import { rdp, type OpenRequest } from '../rdp';
+import { RdpDownloadLifecycle, RdpStallGuard, streamRdpDownload } from '../rdpDownloads';
 import type { Pane, TabStatus } from '../types';
 import { Icon } from './Icon';
 import ironUiUrl from '@devolutions/iron-remote-desktop/iron-remote-desktop.js?url';
 import ironRdpUrl from '@devolutions/iron-remote-desktop-rdp/iron-remote-desktop-rdp.js?url';
+import type { FileInfo, TransferProgress, FileTransferError } from '@devolutions/iron-remote-desktop-rdp';
 
 /**
  * Remote Desktop inside the tab without the Windows RDP control (macOS): the
@@ -65,6 +67,26 @@ export interface WebRdpHandle {
 export const webRdpSessions = new Map<string, WebRdpHandle>();
 
 const SCALE_FIT = 1; // iron-remote-desktop ScreenScale.Fit
+const MAX_NATIVE_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+const DOWNLOAD_STALL_MS = 60_000;
+interface AvailableRemoteFile {
+  info: FileInfo;
+  index: number;
+  list: FileInfo[];
+  revision: number;
+}
+interface FileTransferUiState {
+  state: 'saving' | 'downloading' | 'writing' | 'done' | 'error';
+  progress: number;
+  error?: string;
+}
+const remoteFileKey = (file: AvailableRemoteFile) => `${file.revision}:${file.index}:${file.info.path ?? ''}:${file.info.name}`;
+const formatBytes = (size: number) => {
+  if (!Number.isFinite(size) || size <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const unit = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));
+  return `${(size / 1024 ** unit).toFixed(unit ? 1 : 0)} ${units[unit]}`;
+};
 
 /** Logical size of the tab, even, within what RDP servers accept. */
 function sizeOf(el: HTMLElement) {
@@ -121,6 +143,14 @@ export function WebRdpView(props: {
   keepAlive.current = !!props.keepAlive;
   const userEnded = useRef(false); // Disconnect pressed: no automatic reconnect
   const retries = useRef(0);
+  const downloadLifecycle = useRef(new RdpDownloadLifecycle<FileInfo[]>());
+  const downloadAction = useRef<((file: AvailableRemoteFile) => void) | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [availableFiles, setAvailableFiles] = useState<AvailableRemoteFile[]>([]);
+  const [transferUi, setTransferUi] = useState<Record<string, FileTransferUiState>>({});
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [clipboardEnabled, setClipboardEnabled] = useState(true);
+  const [clipboardWarning, setClipboardWarning] = useState('');
 
   useEffect(() => {
     const el = host.current!;
@@ -131,6 +161,28 @@ export function WebRdpView(props: {
     let loginUser = '';
     let retryTimer = 0;
     let idleTimer = 0;
+    const generation = downloadLifecycle.current.start();
+    let sessionAlive = true;
+    let sessionUser: any = null;
+    let stoppedTransferReason = '';
+    let transferProvider: import('@devolutions/iron-remote-desktop-rdp').RdpFileTransferProvider | null = null;
+    let activeTransfer: { id: number; key: string } | null = null;
+    let stallGuard: RdpStallGuard | null = null;
+    const stopStallWatch = () => {
+      stallGuard?.clear();
+      stallGuard = null;
+    };
+    let activeNativeId = '';
+    let fileListRevision = 0;
+    const clearFiles = () => {
+      setAvailableFiles([]);
+      setTransferUi({});
+      setFilesOpen(false);
+    };
+    clearFiles();
+    setDownloading(false);
+    setClipboardEnabled(true);
+    setClipboardWarning('');
     userEnded.current = false;
     props.onStatus(retries.current ? 'reconnecting' : 'connecting', 'Connecting…');
 
@@ -154,6 +206,8 @@ export function WebRdpView(props: {
       if (cancelled) return;
       mode = info.mode;
       loginUser = info.loginUser;
+      const allowClipboard = info.redirectClipboard !== false;
+      setClipboardEnabled(allowClipboard);
       if (info.needsLogin) {
         setLogin({ username: info.loginUser, password: '', remember: true, error: '', mode: info.mode });
         props.onStatus('disconnected', 'Enter your user name and password');
@@ -162,7 +216,10 @@ export function WebRdpView(props: {
 
       const made = await createFrame(el);
       frame = made.frame;
-      if (cancelled) return;
+      if (cancelled) {
+        frame.remove();
+        return;
+      }
       const { win, iron } = made;
       // Remterm's Ctrl+Alt shortcuts still work while the session has the keyboard.
       win.addEventListener(
@@ -183,10 +240,124 @@ export function WebRdpView(props: {
       const ready = new Promise<any>((resolve) => comp!.addEventListener('ready', (e) => resolve((e as CustomEvent).detail.irgUserInteraction), { once: true }));
       win.document.body.appendChild(comp);
       const user = await ready;
-      if (cancelled) return;
+      if (cancelled) {
+        user.shutdown();
+        return;
+      }
+      sessionUser = user;
       ui.current = user;
       user.setScale(SCALE_FIT); // the whole remote screen inside the tab: nothing cut off right or bottom
-      user.setEnableClipboard(true);
+      user.setEnableClipboard(allowClipboard);
+      user.onWarningCallback((warning: string) => {
+        if (!cancelled && downloadLifecycle.current.isCurrent(generation)) setClipboardWarning(warning);
+      });
+
+      if (allowClipboard) {
+        const provider: import('@devolutions/iron-remote-desktop-rdp').RdpFileTransferProvider = new iron.RdpFileTransferProvider();
+        transferProvider = provider;
+        user.enableFileTransfer(provider);
+        const current = () => !cancelled && sessionAlive && downloadLifecycle.current.isCurrent(generation);
+        const stopSession = (reason: string) => {
+          if (!current()) return;
+          stoppedTransferReason = reason;
+          sessionAlive = false;
+          userEnded.current = true;
+          downloadLifecycle.current.end(generation);
+          clearFiles();
+          setDownloading(false);
+          setClipboardWarning(reason);
+          props.onStatus('disconnected', reason);
+          stallGuard?.clear();
+          if (activeNativeId) void rdpDownload.cancel(activeNativeId).catch(() => {});
+          try {
+            provider.dispose();
+            user.shutdown();
+          } catch {
+            /* already closed */
+          }
+        };
+        provider.on('files-available', (files: FileInfo[]) => {
+          if (!current()) return;
+          downloadLifecycle.current.publishFiles(generation, files);
+          const revision = ++fileListRevision;
+          setAvailableFiles(files.map((info, index) => ({ info, index, list: files, revision })));
+          setTransferUi({});
+        });
+        provider.on('download-progress', (progress: TransferProgress) => {
+          if (!current() || !activeTransfer || activeTransfer.id !== progress.transferId) return;
+          if (progress.totalBytes > MAX_NATIVE_DOWNLOAD_BYTES) {
+            stopSession(`This file is larger than the ${formatBytes(MAX_NATIVE_DOWNLOAD_BYTES)} download limit. Reconnect to continue.`);
+            return;
+          }
+          stallGuard?.activity();
+          const progressKey = activeTransfer.key;
+          setTransferUi((old) => ({ ...old, [progressKey]: { state: 'downloading', progress: Math.max(0, Math.min(100, progress.percentage)) } }));
+        });
+        provider.on('error', (error: FileTransferError) => {
+          if (!current() || error.direction === 'upload') return;
+          if (typeof error.fileIndex !== 'number') return;
+          const key = `:${error.fileIndex}:`;
+          setTransferUi((old) => {
+            const match = Object.keys(old).find((entry) => entry.includes(key));
+            return match ? { ...old, [match]: { state: 'error', progress: old[match].progress, error: error.message } } : old;
+          });
+        });
+        downloadAction.current = (file) => {
+          const key = remoteFileKey(file);
+          if (file.info.isDirectory || file.info.size > MAX_NATIVE_DOWNLOAD_BYTES) return;
+          if (!current() || activeTransfer || !downloadLifecycle.current.reserve(generation, file.list)) return;
+          setDownloading(true);
+          void (async () => {
+            setTransferUi((old) => ({ ...old, [key]: { state: 'saving', progress: 0 } }));
+            let nativeId = '';
+            try {
+              // Open the native save dialog directly from the click, before requesting remote bytes.
+              nativeId = await rdpDownload.begin(file.info.name, file.info.size);
+              if (!nativeId) {
+                if (current()) setTransferUi((old) => ({ ...old, [key]: { state: 'error', progress: 0, error: 'Save canceled.' } }));
+                return;
+              }
+              if (!current() || downloadLifecycle.current.currentFiles(generation) !== file.list) {
+                await rdpDownload.cancel(nativeId).catch(() => {});
+                return;
+              }
+              activeNativeId = nativeId;
+              const handle = provider.downloadFile(file.info, file.index);
+              activeTransfer = { id: handle.transferId, key };
+              stallGuard = new RdpStallGuard(DOWNLOAD_STALL_MS, () => stopSession('The file transfer stopped responding. Reconnect to try again.'));
+              stallGuard.activity();
+              setTransferUi((old) => ({ ...old, [key]: { state: 'downloading', progress: 0 } }));
+              const blob = await handle.completion;
+              stallGuard?.clear(); // bytes are local now: local streaming must not stall-kill the session
+              if (!current()) throw new Error('The RDP session ended during the download.');
+              if (blob.size > MAX_NATIVE_DOWNLOAD_BYTES) {
+                stopSession(`This file is larger than the ${formatBytes(MAX_NATIVE_DOWNLOAD_BYTES)} download limit. Reconnect to continue.`);
+                throw new Error(`The file is larger than the ${formatBytes(MAX_NATIVE_DOWNLOAD_BYTES)} download limit.`);
+              }
+              if (file.info.size > 0 && file.info.size !== blob.size) {
+                throw new Error(`The remote reported ${formatBytes(file.info.size)}, but sent ${formatBytes(blob.size)}.`);
+              }
+              setTransferUi((old) => ({ ...old, [key]: { state: 'writing', progress: 100 } }));
+              await streamRdpDownload(blob, nativeId, rdpDownload, current, () => {});
+              nativeId = '';
+              activeNativeId = '';
+              if (current()) setTransferUi((old) => ({ ...old, [key]: { state: 'done', progress: 100 } }));
+            } catch (error) {
+              stallGuard?.clear();
+              if (nativeId) await rdpDownload.cancel(nativeId).catch(() => {});
+              if (current()) setTransferUi((old) => ({ ...old, [key]: { state: 'error', progress: 0, error: errorMessage(error) } }));
+            } finally {
+              stopStallWatch();
+              activeTransfer = null;
+              if (activeNativeId === nativeId) activeNativeId = '';
+              downloadLifecycle.current.release(generation);
+              if (current()) setDownloading(false);
+            }
+          })();
+        };
+      } else {
+        downloadAction.current = null;
+      }
 
       const config = user
         .configBuilder()
@@ -225,29 +396,74 @@ export function WebRdpView(props: {
       }, 20_000);
 
       const end = await session.run();
+      sessionAlive = false;
+      if (downloadLifecycle.current.end(generation)) {
+        clearFiles();
+        setDownloading(false);
+      }
+      stopStallWatch();
+      activeTransfer = null;
+      if (activeNativeId) {
+        await rdpDownload.cancel(activeNativeId).catch(() => {});
+        activeNativeId = '';
+      }
+      try {
+        transferProvider?.dispose();
+        user.shutdown();
+      } catch {
+        /* session already ended */
+      }
       window.clearInterval(idleTimer);
       const why = `Session ended: ${end?.reason?.() ?? 'disconnected'}`;
-      if (!cancelled && !retry(why)) props.onStatus('disconnected', why);
+      if (!cancelled && !stoppedTransferReason && !retry(why)) props.onStatus('disconnected', why);
     })().catch((e) => {
       if (cancelled) return;
+      window.clearInterval(idleTimer);
+      sessionAlive = false;
+      if (downloadLifecycle.current.end(generation)) {
+        clearFiles();
+        setDownloading(false);
+      }
+      stopStallWatch();
+      activeTransfer = null;
+      if (activeNativeId) {
+        void rdpDownload.cancel(activeNativeId).catch(() => {});
+        activeNativeId = '';
+      }
+      try {
+        transferProvider?.dispose();
+        sessionUser?.shutdown();
+      } catch {
+        /* session already closed */
+      }
       const err = describeError(e);
       if (err.login) {
         // Ask again right here instead of sending the user to the settings.
         setLogin({ username: typed.current?.username ?? loginUser, password: '', remember: true, error: err.text, mode });
         props.onStatus('disconnected', err.text);
-      } else if (!retry(err.text)) props.onStatus('disconnected', err.text);
+      } else if (!stoppedTransferReason && !retry(err.text)) props.onStatus('disconnected', err.text);
     });
 
     return () => {
       cancelled = true;
+      sessionAlive = false;
+      downloadLifecycle.current.end(generation);
+      downloadAction.current = null;
+      stopStallWatch();
+      if (activeNativeId) void rdpDownload.cancel(activeNativeId).catch(() => {});
       window.clearInterval(retryTimer);
       window.clearInterval(idleTimer);
       try {
-        ui.current?.shutdown();
+        sessionUser?.shutdown();
       } catch {
         /* already closed */
       }
-      ui.current = null;
+      try {
+        transferProvider?.dispose();
+      } catch {
+        /* already closed */
+      }
+      if (ui.current === sessionUser) ui.current = null;
       frame?.remove();
     };
   }, [attempt]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -331,6 +547,62 @@ export function WebRdpView(props: {
   return (
     <div className="rdp-view web-rdp">
       <div className="web-rdp-host" ref={host} />
+      {status === 'connected' && (
+        <div className="rdp-files-tools">
+          <button className="btn" type="button" onClick={() => setFilesOpen((open) => !open)}>
+            Remote files{availableFiles.length > 0 ? ` (${availableFiles.filter((file) => !file.info.isDirectory).length})` : ''}
+          </button>
+          {filesOpen && (
+            <section className="rdp-files-panel" aria-label="Files copied from remote computer">
+              <header className="rdp-files-head">
+                <div>
+                  <strong>Copied from remote PC</strong>
+                  <div className="hint">Select a file on the remote desktop, copy it, then save it here.</div>
+                </div>
+                <button className="icon-btn sm" type="button" aria-label="Close remote files" onClick={() => setFilesOpen(false)}>×</button>
+              </header>
+              {!clipboardEnabled ? (
+                <div className="rdp-files-empty">Clipboard redirection is disabled. Enable it in Remote Desktop settings and reconnect.</div>
+              ) : availableFiles.length === 0 ? (
+                <div className="rdp-files-empty">Copy one or more files on the remote desktop to see them here.</div>
+              ) : (
+                <div className="rdp-files-list">
+                  {availableFiles.map((file) => {
+                    const key = remoteFileKey(file);
+                    const transfer = transferUi[key];
+                    const directory = !!file.info.isDirectory;
+                    const tooLarge = file.info.size > MAX_NATIVE_DOWNLOAD_BYTES;
+                    return (
+                      <div className="rdp-file-row" key={key}>
+                        <div className="rdp-file-main">
+                          <div className="rdp-file-name" title={file.info.path ? `${file.info.path}/${file.info.name}` : file.info.name}>
+                            {file.info.path ? `${file.info.path.replaceAll('\\', '/')}/` : ''}{file.info.name}
+                          </div>
+                          <div className="rdp-file-meta">
+                            {directory ? 'Folder' : formatBytes(file.info.size)}
+                            {transfer?.state === 'downloading' ? ` · ${Math.round(transfer.progress)}%` : ''}
+                            {transfer?.state === 'writing' ? ' · Saving…' : ''}
+                            {transfer?.state === 'saving' ? ' · Choose a save location…' : ''}
+                            {transfer?.state === 'done' ? ' · Saved' : ''}
+                            {tooLarge ? ` · Over ${formatBytes(MAX_NATIVE_DOWNLOAD_BYTES)} limit` : ''}
+                          </div>
+                          {transfer?.state === 'downloading' && <progress className="rdp-file-progress" max="100" value={transfer.progress} />}
+                          {transfer?.state === 'error' && <div className="rdp-file-error">{transfer.error}</div>}
+                        </div>
+                        <button className="btn sm" type="button" disabled={downloading || directory || tooLarge || transfer?.state === 'saving' || transfer?.state === 'downloading' || transfer?.state === 'writing' || !clipboardEnabled} onClick={() => downloadAction.current?.(file)}>
+                          Save
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {clipboardWarning && <div className="rdp-files-warning">{clipboardWarning}</div>}
+              <footer className="rdp-files-foot">Individual files only · 256 MiB maximum · folder entries are listed but cannot be saved as a whole folder</footer>
+            </section>
+          )}
+        </div>
+      )}
       {login ? (
         <div className="rdp-card">
           <form

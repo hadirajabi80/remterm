@@ -568,7 +568,7 @@ func (e *rdpEngine) webSession(p map[string]json.RawMessage) (any, bool, error) 
 			ep.password = *pw
 		}
 	}
-	res := WebRdpSession{Mode: ep.m.Mode, LoginUser: plain}
+	res := WebRdpSession{Mode: ep.m.Mode, LoginUser: plain, RedirectClipboard: ep.settings.RedirectClipboard}
 	if plain == "" || ep.password == "" {
 		res.NeedsLogin = true // the tab asks for user name and password
 		return res, false, nil
@@ -710,7 +710,10 @@ func (e *rdpEngine) launch(p map[string]json.RawMessage) (any, bool, error) {
 		if fr == "" {
 			return nil, false, errors.New("NO_RDP_CLIENT: No Remote Desktop app is installed. Install Microsoft's free “Windows App” from the App Store (or FreeRDP: brew install freerdp), then connect again.")
 		}
-		args := []string{fmt.Sprintf("/v:%s:%d", host, port), "/u:" + user, "/title:" + m.Name, "/cert:tofu", "+clipboard", "/dynamic-resolution", "+auto-reconnect"}
+		args := []string{fmt.Sprintf("/v:%s:%d", host, port), "/u:" + user, "/title:" + m.Name, "/cert:tofu", "/dynamic-resolution", "+auto-reconnect"}
+		if settings.RedirectClipboard {
+			args = append(args, "+clipboard")
+		}
 		if password != "" {
 			args = append(args, "/p:"+password)
 		}
@@ -832,3 +835,6 @@ func nonNil[T any](s []T) []T {
 	}
 	return s
 }
+
+// replaceFile atomically installs a completed download on Unix.
+func replaceFile(source, destination string) error { return os.Rename(source, destination) }

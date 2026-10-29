@@ -22,9 +22,11 @@ Download **Remterm-<version>-macOS.dmg** (universal: Apple Silicon and Intel, ma
 notarized yet: the first time, right-click Remterm → **Open** → Open (or run `xattr -dr com.apple.quarantine /Applications/Remterm.app`).
 
 - SSH, SFTP, port forwarding, keychain, snippets and local terminals (zsh / bash / fish) work as on Windows.
-- **Remote Desktop**: the same machine list, WALLIX login, logins and import (passwords in the macOS Keychain). A session opens in
-  Microsoft's **Windows App** (free, App Store) with the server and WALLIX login filled in and the password on the clipboard (⌘V).
-  Sessions inside Remterm tabs, auto-fill and the master-password vault need Windows.
+- **Remote Desktop**: the same machine list, WALLIX login, saved logins and import (passwords in the macOS Keychain). RDP sessions
+  open inside Remterm tabs through its embedded RDP client. To bring a file from the remote computer, copy it on the remote desktop,
+  open **Remote files** in the session, and choose **Save** beside the file. Each file is downloaded individually; folders cannot be
+  saved as a whole, and files larger than 256 MiB are not supported. Clipboard redirection must be enabled on the connection and
+  allowed by the RDP server. If it was changed in settings, reconnect before copying files.
 - **Finder**: turn on *Open in Remterm* in Settings → right-click a folder → Quick Actions → Open in Remterm; or drop a folder on the
   Dock icon.
 
@@ -41,6 +43,9 @@ The `.dmg` is built by GitHub Actions on every release (`build-macos.sh`, `.gith
 - **Import** a pasted WALLIX target list (auto-grouped), favorites, recent, groups, quick connect to any IP (`Ctrl+Alt+P` or the palette)
 - **Security**: AES-256-GCM vault, key protected by Windows DPAPI; optional master password (PBKDF2-SHA256), auto-lock and lock screen
   (`Ctrl+Alt+L`); the server key is pinned on first connect
+- **File downloads** in embedded RDP sessions: copy files on the remote desktop, then use **Remote files → Save** to choose a local
+  destination. Individual files up to 256 MiB are supported; directories are shown but cannot be saved as folders. Clipboard redirection
+  and server clipboard policy must allow file copy. Reconnect after changing the clipboard setting.
 
 **SSH & terminals** — everything Termora had: hosts in nested groups with inherited settings, SSH/Telnet/Serial, jump-host chains,
 proxies, agent forwarding, keychain (generate/import keys, certificates, install key on server), identities, SFTP with two panes and
@@ -83,5 +88,14 @@ Needs Go 1.26, Node 20+, .NET 10 SDK.
 UI-only development in a browser with a fake backend (no SSH/RDP): `npm --prefix frontend run dev`.
 
 Tests: `go test -tags desktop,production ./...` (SSH integration tests against an in-process server, ConPTY round-trips).
+
+### macOS RDP file download check
+
+On a macOS build, connect to an RDP host that permits clipboard file redirection. Copy a small file on the remote desktop, open
+**Remote files**, save it locally, and confirm the saved file opens and has the same size. Repeat with a file nested in a copied folder;
+save the file entry itself. Confirm a directory entry is disabled and a file over 256 MiB is rejected. Also check that canceling the
+save dialog leaves the RDP session usable, disconnecting while the save dialog is open does not start a transfer on the next session,
+and a server or client clipboard policy that disables file copy produces no available files. Finder paste and exporting a whole folder
+are not supported by this flow.
 
 Engine maintenance (no window): `RemtermRdp.exe --import <file>` · `--set-host <ip>` · `--dump`.

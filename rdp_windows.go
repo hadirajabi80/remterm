@@ -111,6 +111,7 @@ func (a *App) webRdpDev(method, params string) (string, bool, error) {
 	case "rememberLogin":
 		return "null", true, nil
 	case "webSession":
+		redirectClipboard := a.webRdpRedirectClipboard()
 		var p struct {
 			Machine struct {
 				IP string `json:"ip"`
@@ -135,10 +136,10 @@ func (a *App) webRdpDev(method, params string) (string, bool, error) {
 			user, pass = *p.Username, p.Password
 		}
 		if user == "" || pass == "" {
-			out, _ := json.Marshal(WebRdpSession{NeedsLogin: true, Mode: "direct", LoginUser: user})
+			out, _ := json.Marshal(WebRdpSession{NeedsLogin: true, Mode: "direct", LoginUser: user, RedirectClipboard: redirectClipboard})
 			return string(out), true, nil
 		}
-		out, _ := json.Marshal(WebRdpSession{Mode: "direct", LoginUser: user, Proxy: proxy, Token: token, Destination: dest, Username: user, Password: pass})
+		out, _ := json.Marshal(WebRdpSession{Mode: "direct", LoginUser: user, Proxy: proxy, Token: token, Destination: dest, Username: user, Password: pass, RedirectClipboard: redirectClipboard})
 		return string(out), true, nil
 	}
 	return "", false, nil
@@ -474,4 +475,38 @@ func currentUserOnlySDDL() (string, error) {
 		return "", err
 	}
 	return "D:P(A;;GA;;;" + u.User.Sid.String() + ")", nil
+}
+
+// webRdpRedirectClipboard reads the saved Remote Desktop setting for the developer web engine.
+func (a *App) webRdpRedirectClipboard() bool {
+	res, err := a.rdp.call("data", json.RawMessage("{}"), 30*time.Second)
+	if err != nil {
+		return true
+	}
+	var data struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if json.Unmarshal(res, &data) != nil {
+		return true
+	}
+	var settings struct {
+		RedirectClipboard *bool `json:"redirectClipboard"`
+	}
+	if json.Unmarshal(data.Settings, &settings) != nil || settings.RedirectClipboard == nil {
+		return true
+	}
+	return *settings.RedirectClipboard
+}
+
+// replaceFile atomically replaces the selected destination after a complete download.
+func replaceFile(source, destination string) error {
+	src, err := windows.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	dst, err := windows.UTF16PtrFromString(destination)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(src, dst, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 }

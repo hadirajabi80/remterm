@@ -152,6 +152,14 @@ export const api = {
   fsOpen: (fsId: string, path: string) => call<void>('FsOpen', fsId, path),
 };
 
+/** Native staged downloads for files copied from an in-tab RDP session. */
+export const rdpDownload = {
+  begin: (name: string, size: number) => call<string>('RdpDownloadBegin', name, size),
+  write: (id: string, chunkBase64: string) => call<void>('RdpDownloadWrite', id, chunkBase64),
+  finish: (id: string) => call<void>('RdpDownloadFinish', id),
+  cancel: (id: string) => call<void>('RdpDownloadCancel', id),
+};
+
 export const events = {
   on: (name: string, cb: (...data: any[]) => void) => window.runtime.EventsOn(name, cb),
   tunnelStatus: (cb: (s: TunnelStatus) => void) => window.runtime.EventsOn('tunnel:status', cb),

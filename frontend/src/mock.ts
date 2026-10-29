@@ -9,6 +9,7 @@ export function installMock() {
   const enc = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
   const id = () => Math.random().toString(16).slice(2, 10);
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const nativeRdpDownloads = new Map<string, { name: string; size: number; written: number }>();
 
   const base = {
     port: 22,
@@ -97,6 +98,22 @@ export function installMock() {
   window.go = {
     main: {
       App: {
+        RdpDownloadBegin: async (name: string, size: number) => {
+          const downloadId = id();
+          nativeRdpDownloads.set(downloadId, { name, size, written: 0 });
+          return downloadId;
+        },
+        RdpDownloadWrite: async (downloadId: string, chunkBase64: string) => {
+          const download = nativeRdpDownloads.get(downloadId);
+          if (!download) throw new Error('Download staging file is closed.');
+          download.written += Math.max(0, Math.floor((chunkBase64.length * 3) / 4) - (chunkBase64.endsWith('==') ? 2 : chunkBase64.endsWith('=') ? 1 : 0));
+        },
+        RdpDownloadFinish: async (downloadId: string) => {
+          nativeRdpDownloads.delete(downloadId);
+        },
+        RdpDownloadCancel: async (downloadId: string) => {
+          nativeRdpDownloads.delete(downloadId);
+        },
         ListHosts: async () => hosts,
         SaveHost: async (h: Host, secret: string) => {
           const saved = { ...h, id: h.id || id(), hasSecret: h.hasSecret || !!secret };

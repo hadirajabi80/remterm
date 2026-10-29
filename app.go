@@ -18,25 +18,27 @@ import (
 // App is bound to the frontend; its exported methods are callable from JS
 // as window.go.main.App.<Method>.
 type App struct {
-	ctx      context.Context
-	store    *Store
-	history  *cmdHistory
-	mu       sync.Mutex
-	sessions map[string]*Session
-	launch   launchState
-	logs     *logStore
-	tunnels  tunnelManager
-	files    fileManager
-	rdp      *rdpEngine
-	relay    rdpRelay // in-tab Remote Desktop through IronRDP (macOS)
+	ctx          context.Context
+	store        *Store
+	history      *cmdHistory
+	mu           sync.Mutex
+	sessions     map[string]*Session
+	launch       launchState
+	logs         *logStore
+	tunnels      tunnelManager
+	files        fileManager
+	rdp          *rdpEngine
+	relay        rdpRelay // in-tab Remote Desktop through IronRDP (macOS)
+	rdpDownloads *rdpDownloadManager
 }
 
 func NewApp() *App {
 	a := &App{
-		sessions: make(map[string]*Session),
-		logs:     &logStore{},
-		tunnels:  tunnelManager{running: map[string]*runningTunnel{}, status: map[string]TunnelStatus{}},
-		files:    fileManager{sessions: map[string]*fileSession{}, transfers: map[string]context.CancelFunc{}},
+		sessions:     make(map[string]*Session),
+		logs:         &logStore{},
+		tunnels:      tunnelManager{running: map[string]*runningTunnel{}, status: map[string]TunnelStatus{}},
+		files:        fileManager{sessions: map[string]*fileSession{}, transfers: map[string]context.CancelFunc{}},
+		rdpDownloads: newRdpDownloadManager(),
 	}
 	a.rdp = newRdpEngine(a)
 	return a
@@ -59,6 +61,9 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(context.Context) {
+	if a.rdpDownloads != nil {
+		a.rdpDownloads.close()
+	}
 	if a.history != nil {
 		a.history.flush()
 	}

@@ -51,6 +51,8 @@ export const rdp = {
       username: string;
       password: string;
       domain: string;
+      /** Whether this connection enables clipboard redirection (required for remote file copy). */
+      redirectClipboard?: boolean;
     }>('webSession', req),
   /** Save what was typed in a tab's login form (bastion login, or a login for that machine). */
   rememberLogin: (req: { machineId?: string; mode: string; username: string; password: string }) => call<void>('rememberLogin', req),
