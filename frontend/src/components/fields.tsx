@@ -3,6 +3,7 @@ import { SCHEMES } from '../themes';
 import type { EnvVar, Host, Identity, KeyItem, Proxy } from '../types';
 import { Icon } from './Icon';
 import { Modal } from './Modal';
+import { SuggestInput } from './SuggestInput';
 
 /** Name/value rows for environment variables. */
 export function EnvVarsEditor({ value, onChange }: { value: EnvVar[]; onChange(v: EnvVar[]): void }) {
@@ -84,29 +85,26 @@ export function TagInput({ value, onChange, suggestions }: { value: string[]; on
           </button>
         </span>
       ))}
-      <input
-        list="tag-suggestions"
+      <SuggestInput
+        suggestions={suggestions.filter((s) => !value.some((tag) => tag.toLowerCase() === s.toLowerCase()))}
         placeholder={value.length ? '' : 'linux, docker, client-a…'}
         value={text}
         onChange={(e) => {
           if (e.target.value.endsWith(',')) add(e.target.value.slice(0, -1));
           else setText(e.target.value);
         }}
+        onEnter={(e) => {
+          e.preventDefault();
+          add(text);
+        }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            add(text);
-          } else if (e.key === 'Backspace' && !text && value.length) {
+          if (e.key === 'Backspace' && !text && value.length) {
             onChange(value.slice(0, -1));
           }
         }}
         onBlur={() => text && add(text)}
+        onSelect={add}
       />
-      <datalist id="tag-suggestions">
-        {suggestions.filter((s) => !value.includes(s)).map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
     </div>
   );
 }

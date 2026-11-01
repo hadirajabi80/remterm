@@ -4,6 +4,7 @@ import type { GroupConfig, Host, Identity, KeyItem, Proxy } from '../types';
 import { ENVS, PROTOCOLS, inherited } from '../util';
 import { EnvVarsEditor, HostSelect, IdentitySelect, KeySelect, ProxyEditor, SchemeSelect, TagInput } from './fields';
 import { Modal } from './Modal';
+import { SuggestInput } from './SuggestInput';
 
 export const EMPTY_HOST: Host = {
   id: '',
@@ -238,12 +239,7 @@ export function HostDialog(props: {
               <span>
                 Group <span className="hint">— nest with /, e.g. Clients/Acme</span>
               </span>
-              <input className="input" list="host-groups" placeholder="Ungrouped" value={h.group} onChange={(e) => set('group', e.target.value)} />
-              <datalist id="host-groups">
-                {allGroups.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
+              <SuggestInput className="input" suggestions={allGroups} placeholder="Ungrouped" value={h.group} onChange={(e) => set('group', e.target.value)} onSelect={(group) => set('group', group)} />
               <label className="check" style={{ marginTop: 6 }}>
                 <input type="checkbox" checked={!!h.favorite} onChange={(e) => set('favorite', e.target.checked)} />
                 ★ Favorite

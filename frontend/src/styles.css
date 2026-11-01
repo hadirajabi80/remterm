@@ -1031,6 +1031,34 @@ textarea.input {
 select.input {
   cursor: pointer;
 }
+select.input option,
+select.input optgroup {
+  background: var(--bg-2);
+  color: var(--text);
+}
+.suggest-list {
+  position: fixed;
+  z-index: 10000;
+  overflow-y: auto;
+  touch-action: pan-y;
+  padding: 4px;
+  border: 1px solid var(--border-2);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  user-select: none;
+}
+.suggest-option {
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.suggest-option:hover,
+.suggest-option.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
 .input.mono {
   font-family: var(--font-mono);
   font-size: 12.5px;

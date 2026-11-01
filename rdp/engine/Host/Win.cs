@@ -43,8 +43,13 @@ internal static class Win
     /// session) is covered too, where SetForegroundWindow alone is regularly refused.
     /// </summary>
     public static bool FocusControl(Control c)
+        => FocusControl(c, c.IsHandleCreated ? c.Handle : IntPtr.Zero);
+
+    /// <summary>Focuses a child input window when it belongs to the requested control, otherwise the control itself.</summary>
+    public static bool FocusControl(Control c, IntPtr target)
     {
         if (!c.IsHandleCreated) return false;
+        if (target == IntPtr.Zero || !Contains(c, target)) target = c.Handle;
         try
         {
             var root = Root(c);
@@ -55,7 +60,7 @@ internal static class Win
             try
             {
                 if (root != IntPtr.Zero && fg != IntPtr.Zero && fg != root) SetForegroundWindow(root);
-                SetFocus(c.Handle);
+                SetFocus(target);
             }
             finally { if (attached) AttachThreadInput(us, them, false); }
             return Contains(c, FocusedWindow());

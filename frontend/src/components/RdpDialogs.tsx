@@ -4,6 +4,7 @@ import { bastionLogin, makeTarget, rdp, useCover } from '../rdp';
 import { NO_CREDENTIAL, type Bastion, type Machine, type RdpCredential, type RdpData, type RdpQuality, type RdpSettings } from '../types';
 import { Icon } from './Icon';
 import { Modal } from './Modal';
+import { SuggestInput } from './SuggestInput';
 
 /** Picture quality levels, best first (the engine's RdpQuality). */
 export const RDP_QUALITIES: { value: RdpQuality; label: string; hint: string }[] = [
@@ -267,12 +268,7 @@ export function MachineDialog(props: {
 
         <label className="field">
           Folder
-          <input className="input" list="rdp-groups" placeholder="No folder" value={m.group} onChange={(e) => set('group', e.target.value)} />
-          <datalist id="rdp-groups">
-            {groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
+          <SuggestInput className="input" suggestions={groups} placeholder="No folder" value={m.group} onChange={(e) => set('group', e.target.value)} onSelect={(group) => set('group', group)} />
         </label>
         <label className="check" style={{ alignSelf: 'end', paddingBottom: 8 }}>
           <input type="checkbox" checked={m.favorite} onChange={(e) => set('favorite', e.target.checked)} />

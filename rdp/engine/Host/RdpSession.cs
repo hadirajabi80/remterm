@@ -108,12 +108,14 @@ internal sealed class RdpSession
     public void Refresh()
     {
         if (_window != null || !_host.Visible) return;
+        bool hadFocus = Win.Contains(_host, Win.FocusedWindow());
         _host.Visible = false;
         _host.Visible = true;
         Win.BringToTop(_host);
         View.PerformLayout();
         View.Invalidate(true);
         View.Rdp?.Invalidate(true);
+        if (hadFocus) View.FocusRemote();
     }
 
     public void Focus()

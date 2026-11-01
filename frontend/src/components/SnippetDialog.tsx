@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { errorMessage } from '../api';
 import type { Snippet } from '../types';
 import { Modal } from './Modal';
+import { SuggestInput } from './SuggestInput';
 
 export function SnippetDialog(props: {
   snippet: Snippet | null;
@@ -48,12 +49,7 @@ export function SnippetDialog(props: {
         </label>
         <label className="field">
           Group
-          <input className="input" list="snippet-groups" placeholder="Docker, .NET, Node…" value={s.group} onChange={(e) => set('group', e.target.value)} />
-          <datalist id="snippet-groups">
-            {props.groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
+          <SuggestInput className="input" suggestions={props.groups} placeholder="Docker, .NET, Node…" value={s.group} onChange={(e) => set('group', e.target.value)} onSelect={(group) => set('group', group)} />
         </label>
         <label className="field span2">
           <span>Command <span className="hint">— {'{{name}}'} or {'{{name:default}}'} is asked when you run it; multiple lines run in order</span></span>

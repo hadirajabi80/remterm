@@ -19,6 +19,8 @@ export function useOverlayEscape(onClose: () => void) {
     stack.push(token);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && stack[stack.length - 1] === token) {
+        // Let an expanded combobox consume its first Escape to dismiss suggestions.
+        if (e.target instanceof HTMLElement && e.target.getAttribute('role') === 'combobox' && e.target.getAttribute('aria-expanded') === 'true') return;
         e.preventDefault();
         e.stopPropagation();
         close.current();

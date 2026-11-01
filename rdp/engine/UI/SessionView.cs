@@ -516,7 +516,8 @@ internal sealed class SessionView : UserControl
         if (_rdp == null || !IsConnected) return;
         // Cross-process safe: docked sessions live inside Remterm's web-view window, where a plain
         // Focus() leaves the keyboard with the web view (keyboard "dead" until a click on the picture).
-        Win.FocusControl(_rdp);
+        var input = _rdp.IsHandleCreated ? Win.FindDescendant(_rdp.Handle, "IHWindowClass") : IntPtr.Zero;
+        Win.FocusControl(_rdp, input);
     }
 
     // ---------------------------------------------------------------- auto-type

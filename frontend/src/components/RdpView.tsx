@@ -28,6 +28,19 @@ export function RdpView(props: {
   const mode = pane.rdpMode ?? 'docked';
   const ready = !!pane.rdpReady;
   const docked = mode === 'docked';
+  const latest = useRef({ visible: false, active: props.active, locked: props.locked, covered });
+  latest.current = { visible: props.shown && docked && ready && !frozen && !props.locked, active: props.active, locked: props.locked, covered };
+
+  // A delayed native refresh may finish after the user has selected another pane,
+  // opened a dialog, or focused a Remterm control. Read the current state at the
+  // moment focus would be restored, not the state from when the timer was set.
+  const canRestoreFocus = () => {
+    const state = latest.current;
+    const el = document.activeElement;
+    return state.visible && state.active && !state.locked && !state.covered && !cover.full() &&
+      !document.hidden && document.hasFocus() &&
+      (!el || el === document.body || el === document.documentElement);
+  };
 
   // A dialog covers the window: show a still of the live session first (decoded,
   // so nothing flashes), then hide the native window.
@@ -90,17 +103,22 @@ export function RdpView(props: {
     const iv = window.setInterval(push, 400); // catches moves that change no size (sidebar, splits)
     // Back from minimized or another app: put the session in place and redraw it (what switching tabs did).
     let back = 0;
+    let cancelled = false;
     const comeBack = () => {
       if (document.hidden) return;
       window.clearTimeout(back);
       back = window.setTimeout(() => {
         push(true);
-        if (visible) void rdp.refresh(id).catch(() => {});
+        if (!latest.current.visible || document.hidden) return;
+        void rdp.refresh(id).then(() => {
+          if (!cancelled && canRestoreFocus()) void rdp.focus(id).catch(() => {});
+        }).catch(() => {});
       }, 250);
     };
     document.addEventListener('visibilitychange', comeBack);
     window.addEventListener('focus', comeBack);
     return () => {
+      cancelled = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener('resize', later);
@@ -136,16 +154,12 @@ export function RdpView(props: {
   // Give the session the keyboard when its tab comes forward, and again when the window is
   // worked in (nested RDP often hands the keyboard back to the web view on re-activation).
   useEffect(() => {
-    if (!visible || !props.active) return;
+    // Selecting the RDP tab or pane is an explicit request to send input there.
+    // Keep this activation path separate from delayed window reactivation, which
+    // must preserve focus in any Remterm control the user is currently using.
+    if (!visible || !props.active || props.locked || covered) return;
     void rdp.focus(id).catch(() => {});
-    const again = () => {
-      const el = document.activeElement;
-      if (el && el !== document.body && el !== document.documentElement) return; // typing in Remterm's own UI
-      void rdp.focus(id).catch(() => {});
-    };
-    window.addEventListener('focus', again);
-    return () => window.removeEventListener('focus', again);
-  }, [visible, props.active, id]);
+  }, [visible, props.active, props.locked, covered, id]);
 
   const failed = !ready && pane.status === 'disconnected';
   return (
