@@ -13,6 +13,9 @@ on:
       version:
         description: Version shown in the app
         default: dev
+      release_tag:
+        description: Existing release tag to rebuild and upload (optional)
+        default: ''
 
 permissions:
   contents: write
@@ -22,6 +25,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -39,8 +44,10 @@ jobs:
 
       - name: Remterm.exe, RemtermRdp.exe + setup
         shell: pwsh
+        env:
+          BUILD_VERSION: ${{ github.event.release.tag_name || inputs.release_tag || inputs.version }}
         run: |
-          $version = '${{ github.event.release.tag_name || inputs.version }}'.TrimStart('v')
+          $version = $env:BUILD_VERSION.TrimStart('v')
           ./build.ps1 -Installer -Version $version
 
       - uses: actions/upload-artifact@v4
@@ -50,16 +57,19 @@ jobs:
 
       # The in-app updater downloads RemtermSetup-<version>.exe from the release.
       - name: Attach the setup to the release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" build/bin/RemtermSetup-*.exe --clobber
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" build/bin/RemtermSetup-*.exe --clobber
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -76,10 +86,11 @@ jobs:
         run: npm ci && npm run build
 
       - name: Remterm.app + dmg
+        env:
+          BUILD_VERSION: ${{ github.event.release.tag_name || inputs.release_tag || inputs.version }}
         run: |
-          VERSION="${{ github.event.release.tag_name || inputs.version }}"
           chmod +x build-macos.sh
-          ./build-macos.sh "${VERSION#v}"
+          ./build-macos.sh "${BUILD_VERSION#v}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,7 +98,8 @@ jobs:
           path: build/macos/*.dmg
 
       - name: Attach to the release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" build/macos/*.dmg --clobber
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+        run: gh release upload "$RELEASE_TAG" build/macos/*.dmg --clobber
