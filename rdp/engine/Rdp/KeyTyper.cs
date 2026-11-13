@@ -7,6 +7,8 @@ namespace RemoteHub.Rdp;
 /// </summary>
 internal static class KeyTyper
 {
+    internal sealed class PartialInputException(uint sent, int total)
+        : InvalidOperationException($"SendInput sent {sent}/{total} keystrokes; the batch must not be replayed.");
     private const int Shift = 0x2A;
     private const int Ctrl = 0x1D;
     private const int A = 0x1E;
@@ -158,8 +160,48 @@ internal static class KeyTyper
         }
         uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         Array.Clear(inputs);
-        if (sent != inputs.Length)
-            throw new InvalidOperationException($"SendInput sent {sent}/{inputs.Length} keystrokes.");
+        CheckInputCount(sent, inputs.Length);
+    }
+
+    internal static void CheckInputCount(uint sent, int expected)
+    {
+        if (sent > 0 && sent != expected) throw new PartialInputException(sent, expected);
+        if (sent == 0 && expected > 0) throw new InvalidOperationException("SendInput did not send any keystrokes.");
+    }
+
+    // Unicode packets express the actual characters rather than positions on a
+    // keyboard. Windows sign-in must not reinterpret a saved password through
+    // the current remote layout or Caps Lock, and cannot depend on clipboard paste.
+    internal static INPUT[] UnicodeInputs(string text)
+    {
+        if (text.Any(char.IsControl)) throw new InvalidOperationException("A credential contains an unsupported control character.");
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!char.IsSurrogate(text[i])) continue;
+            if (!char.IsHighSurrogate(text[i]) || i + 1 >= text.Length || !char.IsLowSurrogate(text[++i]))
+                throw new InvalidOperationException("A credential contains invalid Unicode text.");
+        }
+        var inputs = new INPUT[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            for (int up = 0; up < 2; up++)
+                inputs[2 * i + up] = new INPUT
+                {
+                    type = INPUT_KEYBOARD,
+                    u = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = text[i], dwFlags = KEYEVENTF_UNICODE | (up == 1 ? KEYEVENTF_KEYUP : 0u) } },
+                };
+        }
+        return inputs;
+    }
+
+    public static void SendUnicodeText(string text)
+    {
+        var inputs = UnicodeInputs(text);
+        try
+        {
+            if (inputs.Length > 0) CheckInputCount(SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>()), inputs.Length);
+        }
+        finally { Array.Clear(inputs); }
     }
 
     /// <summary>For self-test: the marshaled INPUT size (must be 40 on x64, 28 on x86).</summary>
@@ -168,15 +210,16 @@ internal static class KeyTyper
     private const int INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT { public uint type; public InputUnion u; }
+    internal struct INPUT { public uint type; public InputUnion u; }
 
     // The union must be the size of its LARGEST member (MOUSEINPUT) so that sizeof(INPUT) is the value
     // Windows expects for cbSize (40 on x64). A union holding only KEYBDINPUT made INPUT too small and
     // SendInput silently rejected every call (returned 0).
     [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
+    internal struct InputUnion
     {
         [FieldOffset(0)] public MOUSEINPUT mi;
         [FieldOffset(0)] public KEYBDINPUT ki;
@@ -184,7 +227,7 @@ internal static class KeyTyper
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT
+    internal struct KEYBDINPUT
     {
         public ushort wVk;
         public ushort wScan;
@@ -194,7 +237,7 @@ internal static class KeyTyper
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct MOUSEINPUT
+    internal struct MOUSEINPUT
     {
         public int dx;
         public int dy;
@@ -205,7 +248,7 @@ internal static class KeyTyper
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct HARDWAREINPUT
+    internal struct HARDWAREINPUT
     {
         public uint uMsg;
         public ushort wParamL;

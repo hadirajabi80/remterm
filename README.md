@@ -37,9 +37,15 @@ The `.dmg` is built by GitHub Actions on every release (`build-macos.sh`, `.gith
 **Remote Desktop** (sidebar → monitor icon)
 - RDP sessions in tabs and split panes, next to SSH and terminals; **pop out** a session into its own window (another monitor) or go
   **fullscreen** with an mstsc-style bar — the session stays connected
+- Unicode text from a phone's soft keyboard uses the native text-input path when remotely operating Remterm; physical keys and
+  shortcuts keep the RDP ActiveX keyboard path. Embedded focus also updates the managed ActiveX container before focusing its input window.
 - **WALLIX Bastion** aware: selector-bypass login (`{target}:{auth}:{user}`), and screen detection (Windows OCR) that fills the bastion
   login and the *Target Information Required* screen
 - **Saved logins**: `Ctrl+Alt+K` in a session → pick a login → typed on the current screen; assign a login to a machine to auto-fill
+- **Windows lock screen**: the login picker's **Fields to fill → Password only (Windows lock screen)** skips username entry when the account is
+  already selected. Windows sign-in fields receive Unicode keyboard input, independent of keyboard layout and Caps Lock, without
+  clipboard paste. An incomplete input batch is not replayed or submitted. An unrecognized screen asks you to choose password-only
+  explicitly rather than guessing that it has a username field. **Username + password** remains available for other login forms.
 - **Import** a pasted WALLIX target list (auto-grouped), favorites, recent, groups, quick connect to any IP (`Ctrl+Alt+P` or the palette)
 - **Security**: AES-256-GCM vault, key protected by Windows DPAPI; optional master password (PBKDF2-SHA256), auto-lock and lock screen
   (`Ctrl+Alt+L`); the server key is pinned on first connect
@@ -52,6 +58,24 @@ proxies, agent forwarding, keychain (generate/import keys, certificates, install
 drag & drop, port forwarding (local/remote/SOCKS), split panes, broadcast input, workspaces, snippets, command history, session logs,
 local shells via ConPTY (PowerShell, cmd, WSL, Git Bash), themes and backgrounds.
 
+**Automatic sudo password**: edit an SSH host → **Credentials** → enable **Fill password automatically when sudo asks**.
+Under **Password for sudo**, choose **Same password as SSH login**, pick a saved password by title, or click **+ Save new** to
+save a different password (also works with key/agent login). A newly saved password is selected immediately. Reconnect after
+changing these settings. Remterm answers the standard English
+`[sudo] password for <SSH user>:` prompt after a submitted `sudo` command, including startup commands and snippets. It makes one
+automatic attempt per command; a rejected password leaves the next prompt for manual entry. Custom/localized prompts, `su`, nested
+SSH logins, and commands edited with shell completion/cursor keys use manual entry. Passwords are sent directly to the SSH terminal
+input and are never added to Remterm's command history or host JSON.
+
+**Saved passwords**: create and select passwords directly in **Credentials → Password for SSH login / Password for sudo**.
+Click **+ Save new**, enter a recognizable title and password, and save; it is selected for that field automatically. **Edit**
+beside the selection updates the shared password. The same entry can be reused on many hosts; reconnect to use a changed value.
+For a password prompt in an open terminal, click **Fill password** above the terminal (or **Ctrl+Alt+K**), then choose its title.
+The picker also offers **Save new password**. Filling writes only to the selected terminal, without pressing Enter, broadcasting
+to other panes, or adding the password to command history. The optional **Passwords & SSH keys** sidebar lists all saved entries.
+Password values stay in the OS credential store; only titles and references appear in host data. Remove a password from its
+assigned hosts before deleting it.
+
 ### Shortcuts
 
 | Keys | Action |
@@ -59,7 +83,7 @@ local shells via ConPTY (PowerShell, cmd, WSL, Git Bash), themes and backgrounds
 | `Ctrl+Shift+P` | Command palette (hosts, machines, actions; type `user@host` or an IP to connect) |
 | `Ctrl+Shift+T` / `Ctrl+Shift+`` ` | New connection / local terminal |
 | `Ctrl+Tab`, `Ctrl+1…9` | Switch tabs (inside an RDP session: `Ctrl+Alt+PgDn/PgUp`, `Ctrl+Alt+1…9`) |
-| `Ctrl+Alt+K` | Fill a saved login in the RDP session |
+| `Ctrl+Alt+K` | Choose a saved password for the terminal, or a saved login in the RDP session |
 | `Ctrl+Alt+Enter` | RDP fullscreen on / off |
 | `Ctrl+Alt+R` / `Ctrl+Alt+W` | Reconnect / close the RDP session |
 | `Ctrl+Alt+L` | Lock (needs a master password) |
@@ -88,6 +112,7 @@ Needs Go 1.26, Node 20+, .NET 10 SDK.
 UI-only development in a browser with a fake backend (no SSH/RDP): `npm --prefix frontend run dev`.
 
 Tests: `go test -tags desktop,production ./...` (SSH integration tests against an in-process server, ConPTY round-trips).
+RDP input regression tests: `dotnet run --project rdp/tests/RemtermRdp.Tests.csproj -c Release` (headless; no real credentials or keyboard injection).
 
 ### macOS RDP file download check
 

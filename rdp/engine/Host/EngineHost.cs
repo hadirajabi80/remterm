@@ -156,7 +156,7 @@ internal sealed class EngineHost : ApplicationContext
             case "focus": Session(p).Focus(); return null;
             case "refresh": Session(p).Refresh(); return null;
             case "fill": ShowFillPicker(Session(p)); return null;
-            case "fillWith": FillWith(Session(p), Str(p, "key")); return null;
+            case "fillWith": FillWith(Session(p), Str(p, "key"), Bool(p, "passwordOnly"), Bool(p, "loginAndPassword")); return null;
             case "fullscreen": Session(p).ToggleFullscreen(); return null;
             case "popout":
                 Session(p).PopOut(p.TryGetProperty("x", out _) ? new Point(Int(p, "x"), Int(p, "y")) : null, Bool(p, "follow"));
@@ -554,7 +554,7 @@ internal sealed class EngineHost : ApplicationContext
         picker.FormClosed += (_, _) =>
         {
             _picker = null;
-            if (picker.DialogResult == DialogResult.OK && picker.Result is { } f) s.View.FillSmart(f.Login, f.Password);
+            if (picker.DialogResult == DialogResult.OK && picker.Result is { } f) s.View.FillSmartWhenShown(f.Login, f.Password, picker.PasswordOnly, picker.LoginAndPassword);
         };
         _picker = picker;
         // Not modal: a modal dialog disables Remterm's window, and WebView2 fails (Wails exits) when that
@@ -580,10 +580,11 @@ internal sealed class EngineHost : ApplicationContext
     }
 
     /// <summary>A login picked in Remterm's list: typed once the session is back on screen.</summary>
-    private void FillWith(RdpSession s, string key)
+    private void FillWith(RdpSession s, string key, bool passwordOnly, bool loginAndPassword)
     {
+        if (passwordOnly && loginAndPassword) throw new InvalidOperationException("Choose one fill mode.");
         var f = FillEntries(s).FirstOrDefault(e => e.Key == key) ?? throw new InvalidOperationException("That login was deleted.");
-        s.View.FillSmartWhenShown(f.Login, f.Password);
+        s.View.FillSmartWhenShown(f.Login, f.Password, passwordOnly, loginAndPassword);
     }
 
     // ============================================================================================ hotkeys

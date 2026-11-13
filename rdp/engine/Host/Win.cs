@@ -27,7 +27,10 @@ internal static class Win
     }
 
     public static bool Contains(Control c, IntPtr hwnd) =>
-        c.IsHandleCreated && hwnd != IntPtr.Zero && (hwnd == c.Handle || IsChild(c.Handle, hwnd));
+        c.IsHandleCreated && Contains(c.Handle, hwnd);
+
+    public static bool Contains(IntPtr parent, IntPtr hwnd) =>
+        parent != IntPtr.Zero && hwnd != IntPtr.Zero && (hwnd == parent || IsChild(parent, hwnd));
 
     public static void BringToTop(Control c)
     {
@@ -60,10 +63,14 @@ internal static class Win
             try
             {
                 if (root != IntPtr.Zero && fg != IntPtr.Zero && fg != root) SetForegroundWindow(root);
+                // Keep WinForms' nested ActiveControl/ActiveX activation in sync
+                // with native focus. SetFocus alone bypasses that bookkeeping in
+                // our embedded ContainerControl (there is no top-level Form).
+                c.Select();
                 SetFocus(target);
             }
             finally { if (attached) AttachThreadInput(us, them, false); }
-            return Contains(c, FocusedWindow());
+            return Contains(target, FocusedWindow());
         }
         catch { return false; }
     }

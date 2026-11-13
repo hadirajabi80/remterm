@@ -14,7 +14,26 @@ export function KeychainPanel({ ctx }: { ctx: SidebarCtx }) {
   return (
     <div className="side-list padded">
       <div className="sec-head">
-        <span>Keys</span>
+        <span>Saved passwords</span>
+        <button className="link" onClick={() => ctx.editPassword(null)}>+ New</button>
+      </div>
+      {ctx.passwords.length === 0 && <div className="side-note">Save passwords with a title, then select them for SSH login or automatic sudo entry.</div>}
+      {ctx.passwords.map((p) => (
+        <div key={p.id} className="row" tabIndex={0} onClick={() => ctx.editPassword(p)} onKeyDown={(e) => { if (e.target === e.currentTarget && e.key === 'Enter') ctx.editPassword(p); }}>
+          <span className="host-ico env-none"><Icon name="key" size={14} /></span>
+          <div className="row-main">
+            <div className="row-title">{p.title}</div>
+            <div className="row-sub">Saved password</div>
+          </div>
+          <div className="row-actions show" onClick={(e) => e.stopPropagation()}>
+            <button className="btn sm" disabled={!ctx.hasSession} title="Fill in active terminal without pressing Enter" onClick={() => ctx.fillPassword(p)}>Fill</button>
+            <button className="icon-btn sm" title="Edit password" onClick={() => ctx.editPassword(p)}><Icon name="edit" size={13} /></button>
+          </div>
+        </div>
+      ))}
+
+      <div className="sec-head">
+        <span>SSH keys</span>
         <span className="sec-actions">
           <button className="link" onClick={ctx.importKey}>
             Import
@@ -46,14 +65,14 @@ export function KeychainPanel({ ctx }: { ctx: SidebarCtx }) {
       })}
 
       <div className="sec-head">
-        <span>Identities</span>
+        <span>Shared logins</span>
         <span className="sec-actions">
           <button className="link" onClick={() => ctx.editIdentity(null)}>
             + New
           </button>
         </span>
       </div>
-      {ctx.identities.length === 0 && <div className="side-note">An identity is a username + password/key you can attach to many hosts or a whole group.</div>}
+      {ctx.identities.length === 0 && <div className="side-note">Save a username together with its password or SSH key to reuse the whole login on several servers.</div>}
       {ctx.identities.map((i) => (
         <div key={i.id} className="row" tabIndex={0} onClick={() => ctx.editIdentity(i)} onKeyDown={(e) => e.key === 'Enter' && ctx.editIdentity(i)}>
           <span className="host-ico env-none">

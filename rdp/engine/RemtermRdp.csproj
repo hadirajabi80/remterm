@@ -25,4 +25,8 @@
     <NoWarn>$(NoWarn);CA1416;WFO1000</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RemtermRdp.Tests" />
+  </ItemGroup>
+
 </Project>

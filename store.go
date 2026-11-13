@@ -26,6 +26,10 @@ type Host struct {
 	JumpHostID     string `json:"jumpHostId"`
 	StartupCommand string `json:"startupCommand"`
 	HasSecret      bool   `json:"hasSecret"`
+	AutoSudo       bool   `json:"autoSudo"`
+	HasSudoSecret  bool   `json:"hasSudoSecret"`
+	PasswordID     string `json:"passwordId"`
+	SudoPasswordID string `json:"sudoPasswordId"`
 	LastUsed       int64  `json:"lastUsed"` // unix ms of the last successful connection
 	Favorite       bool   `json:"favorite"`
 
@@ -60,6 +64,7 @@ type storeData struct {
 	Settings        json.RawMessage `json:"settings,omitempty"` // UI preferences, shape owned by the frontend
 	Groups          []GroupConfig   `json:"groups"`
 	Identities      []Identity      `json:"identities"`
+	Passwords       []PasswordItem  `json:"passwords"`
 	Keys            []KeyItem       `json:"keys"`
 	Tunnels         []Tunnel        `json:"tunnels"`
 	Workspaces      []Workspace     `json:"workspaces"`
@@ -192,6 +197,13 @@ func (s *Store) Host(id string) (Host, bool) {
 func (s *Store) PutHost(h Host) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, id := range []string{h.PasswordID, h.SudoPasswordID} {
+		if id != "" {
+			if _, ok := find(s.data.Passwords, id, passwordItemID); !ok {
+				return errors.New("selected saved password no longer exists")
+			}
+		}
+	}
 	for i := range s.data.Hosts {
 		if s.data.Hosts[i].ID == h.ID {
 			s.data.Hosts[i] = h

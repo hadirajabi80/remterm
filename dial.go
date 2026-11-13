@@ -22,11 +22,12 @@ import (
 
 // sshConn is a connected SSH client plus the jump hosts it goes through.
 type sshConn struct {
-	client  *ssh.Client
-	hops    []*ssh.Client // outermost first
-	host    Host          // effective settings (groups applied)
-	forward agent.Agent   // keys offered to the server when agent forwarding is on
-	closers []func()
+	client        *ssh.Client
+	hops          []*ssh.Client // outermost first
+	host          Host          // effective settings (groups applied)
+	forward       agent.Agent   // keys offered to the server when agent forwarding is on
+	closers       []func()
+	loginPassword string // only set when a password was used for SSH authentication
 }
 
 func (c *sshConn) Close() {
@@ -61,7 +62,15 @@ func (a *App) connectHost(h Host, password string, seen map[string]bool) (*sshCo
 
 	secret := password
 	if secret == "" {
-		secret = a.savedSecret(h)
+		if h.PasswordID != "" {
+			value, err := a.passwordValue(h.PasswordID)
+			if err != nil {
+				return nil, err
+			}
+			secret = value
+		} else {
+			secret = a.savedSecret(h)
+		}
 	}
 	cfg, auth, err := a.clientConfig(h, secret)
 	if err != nil {
@@ -122,6 +131,9 @@ func (a *App) connectHost(h Host, password string, seen map[string]bool) (*sshCo
 		return nil, wrapDialErr(err)
 	}
 	conn.client = ssh.NewClient(c, chans, reqs)
+	if auth.passwordUsed.Load() {
+		conn.loginPassword = secret
+	}
 	return conn, nil
 }
 
@@ -135,6 +147,10 @@ func cleanAuthMarker(err error) string {
 
 // savedSecret is the stored password for a host, or its identity's.
 func (a *App) savedSecret(h Host) string {
+	if h.PasswordID != "" {
+		password, _ := a.passwordValue(h.PasswordID)
+		return password
+	}
 	if h.HasSecret {
 		if s, err := getSecret(h.ID); err == nil && s != "" {
 			return s
@@ -225,8 +241,9 @@ func dialHTTPConnect(d *net.Dialer, proxyAddr, target, user, pass string) (net.C
 }
 
 type authState struct {
-	forward agent.Agent
-	closers []func()
+	forward      agent.Agent
+	closers      []func()
+	passwordUsed *atomic.Bool
 }
 
 // clientConfig builds the auth chain for a host (groups already applied):
@@ -237,7 +254,7 @@ type authState struct {
 //
 // AuthMethod "key" or "password" restricts to that kind.
 func (a *App) clientConfig(h Host, secret string) (*ssh.ClientConfig, authState, error) {
-	var st authState
+	st := authState{passwordUsed: &atomic.Bool{}}
 	method := h.AuthMethod
 	if method == "" {
 		method = "auto"
@@ -333,8 +350,14 @@ func (a *App) clientConfig(h Host, secret string) (*ssh.ClientConfig, authState,
 	if method != "key" {
 		if secret != "" {
 			methods = append(methods,
-				ssh.Password(secret),
-				ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+				ssh.PasswordCallback(func() (string, error) {
+					st.passwordUsed.Store(true)
+					return secret, nil
+				}),
+				ssh.KeyboardInteractive(func(_, _ string, questions []string, echo []bool) ([]string, error) {
+					// Reuse only an identifiable password challenge, never a key
+					// passphrase or an OTP used in keyboard-interactive login.
+					st.passwordUsed.Store(len(questions) == 1 && len(echo) == 1 && !echo[0] && strings.Contains(strings.ToLower(questions[0]), "password"))
 					answers := make([]string, len(questions))
 					for i := range answers {
 						answers[i] = secret

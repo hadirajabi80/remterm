@@ -29,6 +29,7 @@ type testServer struct {
 	mu       sync.Mutex
 	authKeys map[string]bool // marshalled public keys
 	sftpRoot string
+	shell    func(ssh.Channel) // optional scripted shell, guarded by mu
 }
 
 func startTestServer(t *testing.T) *testServer {
@@ -116,7 +117,14 @@ func (s *testServer) serve(c net.Conn, cfg *ssh.ServerConfig) {
 						go func() { _ = srv.Serve(); ch.Close() }()
 					case "shell":
 						_ = r.Reply(true, nil)
-						go func() { _, _ = io.Copy(ch, ch) }() // echo shell
+						s.mu.Lock()
+						shell := s.shell
+						s.mu.Unlock()
+						if shell != nil {
+							go shell(ch)
+						} else {
+							go func() { _, _ = io.Copy(ch, ch) }() // echo shell
+						}
 					case "pty-req", "env":
 						_ = r.Reply(true, nil)
 					default:

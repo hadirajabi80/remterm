@@ -23,7 +23,7 @@ func deleteSecret(hostID string) {
 	_ = keyring.Delete(legacyKeyringService, "host:"+hostID)
 }
 
-// Named secrets: "identity:<id>", "key:<id>", "proxy:<hostId>", "proxy:group:<path>".
+// Named secrets: "password:<id>", "identity:<id>", "key:<id>", "sudo:<hostId>", "proxy:<hostId>", "proxy:group:<path>".
 func setNamedSecret(name, secret string) error { return keyring.Set(keyringService, name, secret) }
 
 func getNamedSecret(name string) string {

@@ -11,9 +11,10 @@ export interface FillChoice {
 }
 
 /** Ctrl+Alt+K: pick a login and it is typed on whatever the session shows. */
-export function FillPicker(props: { entries: FillChoice[]; onPick(key: string): void; onClose(): void }) {
+export function FillPicker(props: { entries: FillChoice[]; onPick(key: string, passwordOnly: boolean, loginAndPassword: boolean): void; onClose(): void }) {
   const [query, setQuery] = useState('');
   const [sel, setSel] = useState(0);
+  const [fields, setFields] = useState('auto');
   const listRef = useRef<HTMLDivElement>(null);
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
   const items = props.entries.filter((e) => tokens.every((t) => `${e.label} ${e.sub}`.toLowerCase().includes(t)));
@@ -26,13 +27,21 @@ export function FillPicker(props: { entries: FillChoice[]; onPick(key: string): 
 
   const pick = (i: number) => {
     const e = items[i];
-    if (e) props.onPick(e.key);
+    if (e) props.onPick(e.key, fields === 'password', fields === 'login');
   };
 
   return (
     <Modal title="Fill login" onClose={props.onClose} width={480}>
       <div className="fill-picker">
         <p className="hint">Pick a login — it is typed on the screen the session shows now.</p>
+        <label className="field">
+          Fields to fill
+          <select className="input" value={fields} onChange={(e) => setFields(e.target.value)}>
+            <option value="auto">Detect fields automatically</option>
+            <option value="password">Password only (Windows lock screen)</option>
+            <option value="login">Username + password</option>
+          </select>
+        </label>
         <input
           className="input"
           autoFocus

@@ -35,6 +35,7 @@ export function TabBar(props: {
   dropIndex?: number | null; // insertion mark while reordering
   onClose(key: string): void;
   onNewSsh(): void;
+  onFillPassword?(): void;
   onNewRdp?(): void;
   /** Tools for the active Remote Desktop pane (null when the active pane is not RDP). */
   rdp: { connected: boolean; mode: string; web?: boolean; keepAlive?: boolean | null } | null;
@@ -167,6 +168,8 @@ export function TabBar(props: {
       </div>
 
       <div className="tabbar-spacer" />
+
+      {props.onFillPassword && <button className="btn sm fill-password-tool" title="Choose a saved password for this terminal (Ctrl+Alt+K)" onClick={props.onFillPassword}><Icon name="key" size={14} /> Fill password</button>}
 
       {props.rdp && props.rdp.keepAlive != null && (
         <button

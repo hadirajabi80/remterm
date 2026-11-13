@@ -23,6 +23,22 @@ internal sealed class RdpHost : AxHost
 
     public IMsRdpClientNonScriptable NonScriptable => (IMsRdpClientNonScriptable)GetOcx()!;
 
+    public override bool PreProcessMessage(ref Message msg)
+    {
+        // A phone's soft keyboard (and Unicode SendInput) sends VK_PACKET,
+        // not a physical key. AxHost normally offers key-down to the OCX's
+        // accelerator translator first; consuming it there prevents the message
+        // loop from producing WM_CHAR. Leave these packets to TranslateMessage
+        // and the RDP input window. Physical keys and shortcuts keep the normal
+        // ActiveX preprocessing path. This also applies after docking/pop-out.
+        if (IsUnicodePacket(msg.Msg, msg.WParam)) return false;
+        return base.PreProcessMessage(ref msg);
+    }
+
+    internal static bool IsUnicodePacket(int message, IntPtr key) =>
+        (message == 0x0100 /* WM_KEYDOWN */ || message == 0x0101 /* WM_KEYUP */) &&
+        key == (IntPtr)0xE7 /* VK_PACKET */;
+
     public event EventHandler? Connecting;
     public event EventHandler? Connected;
     public event EventHandler? LoginComplete;

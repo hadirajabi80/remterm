@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api, cleanError, clipboard, errorMessage } from '../api';
-import type { GroupConfig, Host, Identity, KeyItem, Proxy, Tunnel } from '../types';
+import type { GroupConfig, Host, Identity, KeyItem, PasswordItem, Proxy, Tunnel } from '../types';
 import { formatDate, hostLabel } from '../util';
 import { EnvVarsEditor, HostSelect, IdentitySelect, KeySelect, ProxyEditor, SchemeSelect } from './fields';
 import { Icon } from './Icon';
@@ -35,6 +35,38 @@ function Footer({ onClose, form, busy, label = 'Save', extra }: { onClose(): voi
         {busy ? 'Working…' : label}
       </button>
     </>
+  );
+}
+
+export function PasswordDialog(props: { item: PasswordItem | null; onSaved(item: PasswordItem): void | Promise<void>; onDelete(item: PasswordItem): void; onClose(): void }) {
+  const [item, setItem] = useState<PasswordItem>(props.item ?? { id: '', title: '' });
+  const [password, setPassword] = useState('');
+  const { busy, error, run } = useSubmit(async () => {
+    const saved = await api.savePassword(item, password);
+    setItem(saved);
+    await props.onSaved(saved);
+  });
+  return (
+    <Modal
+      title={props.item ? `Password — ${props.item.title}` : 'New saved password'}
+      onClose={props.onClose}
+      width={480}
+      footer={<Footer onClose={props.onClose} form="password-form" busy={busy} extra={props.item && <button className="btn danger-text" onClick={() => props.onDelete(props.item!)}>Delete</button>} />}
+    >
+      <form id="password-form" className="stack" onSubmit={(e) => { e.preventDefault(); void run(); }}>
+        {error && <div className="error-box">{error}</div>}
+        <label className="field">
+          Title
+          <input className="input" required autoFocus value={item.title} onChange={(e) => setItem({ ...item, title: e.target.value })} placeholder="Production sudo" />
+        </label>
+        <label className="field">
+          Password
+          <input className="input" type="password" autoComplete="new-password" required={!props.item} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={props.item ? '•••••••• saved — leave empty to keep' : 'Enter password'} />
+        </label>
+        <p className="hint">Give this password a name you will recognize, such as “Production servers”. You can reuse it for SSH or sudo on several servers.</p>
+        <p className="hint">Saved securely on this computer. Changing a shared password applies after reconnecting.</p>
+      </form>
+    </Modal>
   );
 }
 

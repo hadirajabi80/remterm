@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
-import type { GroupConfig, Host, Identity, KeyItem, Proxy } from '../types';
+import type { GroupConfig, Host, Identity, KeyItem, PasswordItem, Proxy } from '../types';
 import { ENVS, PROTOCOLS, inherited } from '../util';
 import { EnvVarsEditor, HostSelect, IdentitySelect, KeySelect, ProxyEditor, SchemeSelect, TagInput } from './fields';
 import { Modal } from './Modal';
 import { SuggestInput } from './SuggestInput';
+import { PasswordSelect } from './PasswordSelect';
 
 export const EMPTY_HOST: Host = {
   id: '',
@@ -19,6 +20,10 @@ export const EMPTY_HOST: Host = {
   jumpHostId: '',
   startupCommand: '',
   hasSecret: false,
+  autoSudo: false,
+  hasSudoSecret: false,
+  passwordId: '',
+  sudoPasswordId: '',
   lastUsed: 0,
   favorite: false,
   protocol: 'ssh',
@@ -40,8 +45,10 @@ export function HostDialog(props: {
   hosts: Host[];
   groups: GroupConfig[];
   identities: Identity[];
+  passwords: PasswordItem[];
+  onPasswordDialog(item: PasswordItem | null, onSaved: (item: PasswordItem) => void): void;
   keys: KeyItem[];
-  onSave(h: Host, secret: string, proxyPassword: string, forgetSecret: boolean, connect: boolean): Promise<void>;
+  onSave(h: Host, secret: string, proxyPassword: string, forgetSecret: boolean, connect: boolean, sudo: { password: string; forget: boolean }): Promise<void>;
   onClose(): void;
 }) {
   const [h, setH] = useState<Host>(() => {
@@ -52,6 +59,7 @@ export function HostDialog(props: {
   const [secret, setSecret] = useState('');
   const [proxyPassword, setProxyPassword] = useState('');
   const [forget, setForget] = useState(false);
+  const [forgetSudo, setForgetSudo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [connectAfter, setConnectAfter] = useState(false);
@@ -90,7 +98,7 @@ export function HostDialog(props: {
     const host = split ? { ...h, ...split } : h;
     if (split) setH(host);
     try {
-      await props.onSave({ ...host, port: Number(host.port) || (protocol === 'telnet' ? 23 : 22) }, secret, proxyPassword, forget, connectAfter);
+      await props.onSave({ ...host, port: Number(host.port) || (protocol === 'telnet' ? 23 : 22) }, secret, proxyPassword, forget, connectAfter, { password: '', forget: forgetSudo });
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -269,19 +277,7 @@ export function HostDialog(props: {
 
         {tab === 'auth' && (
           <>
-            {isSSH && (
-              <label className="field span2">
-                <span>
-                  Identity <span className="hint">— a saved username + password/key shared by many hosts</span>
-                </span>
-                <IdentitySelect
-                  value={h.identityId}
-                  onChange={(v) => set('identityId', v)}
-                  identities={props.identities}
-                  inheritLabel={inheritedIdentity ? `From group: ${identityName(inheritedIdentity)}` : 'None — use the fields below'}
-                />
-              </label>
-            )}
+            {isSSH && <p className="hint span2">Choose a password by its title, or save a new one here. The same saved password can be used on several servers.</p>}
             {(!isSSH || (!h.identityId && !inheritedIdentity)) && protocol !== 'serial' && (
               <label className="field">
                 Username
@@ -290,43 +286,27 @@ export function HostDialog(props: {
             )}
             {isSSH && (
               <label className="field">
-                Authentication
+                Sign in using
                 <select className="input" value={h.authMethod} onChange={(e) => set('authMethod', e.target.value)}>
-                  <option value="auto">Automatic (keys, agent, password)</option>
-                  <option value="key">Keys only</option>
-                  <option value="password">Password only</option>
+                  <option value="auto">Automatically choose</option>
+                  <option value="key">SSH key</option>
+                  <option value="password">Password</option>
                 </select>
               </label>
             )}
-            {isSSH && h.authMethod !== 'password' && (
-              <>
-                <label className="field">
-                  Key from keychain
-                  <KeySelect value={h.keyId} onChange={(v) => set('keyId', v)} keys={props.keys} emptyLabel={props.keys.length ? 'None' : 'Keychain is empty'} />
-                </label>
-                <label className="field">
-                  <span>
-                    …or key file <span className="hint">— empty = ~/.ssh defaults</span>
-                  </span>
-                  <div className="addr-row">
-                    <input className="input mono" placeholder="~/.ssh/id_ed25519" value={h.keyPath} onChange={(e) => set('keyPath', e.target.value)} />
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={async () => {
-                        const p = await api.pickKeyFile().catch(() => '');
-                        if (p) set('keyPath', p);
-                      }}
-                    >
-                      Browse…
-                    </button>
-                  </div>
-                </label>
-              </>
+            {isSSH && (
+              <PasswordSelect
+                label="Password for SSH login"
+                value={h.passwordId || ''}
+                items={props.passwords}
+                emptyLabel={h.identityId || inheritedIdentity ? 'Use shared login credentials' : h.hasSecret && !forget ? 'Password saved on this server' : 'Enter a password below'}
+                onChange={(id) => { set('passwordId', id); setSecret(''); }}
+                onManage={props.onPasswordDialog}
+              />
             )}
-            {protocol !== 'serial' && (
+            {protocol !== 'serial' && (!isSSH || !h.passwordId) && (
               <label className="field span2">
-                {isSSH ? 'Password / key passphrase' : 'Password (sent at the login prompt)'}
+                {isSSH ? (h.authMethod === 'key' ? 'Private key passphrase' : 'Password') : 'Password (sent at the login prompt)'}
                 <input
                   className="input"
                   type="password"
@@ -344,8 +324,59 @@ export function HostDialog(props: {
                 )}
               </label>
             )}
+            {isSSH && (
+              <div className="field span2">
+                <label className="check">
+                  <input type="checkbox" checked={!!h.autoSudo} onChange={(e) => set('autoSudo', e.target.checked)} />
+                  Fill password automatically when sudo asks
+                </label>
+                <p className="hint">Choose which password to use when a sudo command asks for it.</p>
+                {h.autoSudo && (
+                  <>
+                    <PasswordSelect
+                      label="Password for sudo"
+                      value={h.sudoPasswordId || (h.hasSudoSecret && !forgetSudo ? '__host__' : '')}
+                      items={props.passwords}
+                      emptyLabel="Same password as SSH login"
+                      legacyLabel={h.hasSudoSecret ? 'Sudo password already saved on this server' : undefined}
+                      onChange={(id) => {
+                        set('sudoPasswordId', id === '__host__' ? '' : id);
+                        setForgetSudo(id === '' && !!h.hasSudoSecret);
+                      }}
+                      onManage={props.onPasswordDialog}
+                    />
+                    <span className="hint">Using an SSH key to sign in? Save a password here for sudo. Reconnect after changing this setting.</span>
+                  </>
+                )}
+              </div>
+            )}
             {protocol === 'telnet' && <p className="hint span2">Telnet sends everything unencrypted — avoid it for anything sensitive.</p>}
             {protocol === 'serial' && <p className="hint span2">Serial connections need no credentials.</p>}
+            {isSSH && (
+              <details className="credential-advanced span2" open={h.authMethod === 'key' || !!h.identityId || !!h.keyId || !!h.keyPath}>
+                <summary>SSH keys & shared logins</summary>
+                <div className="stack">
+                  <label className="field">
+                    Shared login (username + password or SSH key)
+                    <IdentitySelect value={h.identityId} onChange={(v) => set('identityId', v)} identities={props.identities} inheritLabel={inheritedIdentity ? `From group: ${identityName(inheritedIdentity)}` : 'Use this server’s username and password'} />
+                  </label>
+                  {(h.identityId || inheritedIdentity) && <p className="hint">Username is taken from {identityName(h.identityId || inheritedIdentity)}. A password selected above overrides its password.</p>}
+                  {h.authMethod !== 'password' && <>
+                    <label className="field">
+                      Saved SSH key
+                      <KeySelect value={h.keyId} onChange={(v) => set('keyId', v)} keys={props.keys} emptyLabel="Automatically find a key" />
+                    </label>
+                    <label className="field">
+                      Or choose a private key file
+                      <div className="addr-row">
+                        <input className="input mono" placeholder="~/.ssh/id_ed25519" value={h.keyPath} onChange={(e) => set('keyPath', e.target.value)} />
+                        <button type="button" className="btn" onClick={async () => { const p = await api.pickKeyFile().catch(() => ''); if (p) set('keyPath', p); }}>Browse…</button>
+                      </div>
+                    </label>
+                  </>}
+                </div>
+              </details>
+            )}
           </>
         )}
 

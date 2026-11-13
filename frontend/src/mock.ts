@@ -1,5 +1,5 @@
 import type { ConnectRequest } from './api';
-import type { FileEntry, Host, Snippet } from './types';
+import type { FileEntry, Host, PasswordItem, Snippet } from './types';
 import { createRdpMock } from './mockRdp';
 
 /** Browser-only fake backend: echoes input like a tiny shell. */
@@ -68,6 +68,7 @@ export function installMock() {
     },
   ];
   const sessions = new Map<string, { prompt: string; line: string }>();
+  let passwords: PasswordItem[] = [];
   const ago = (min: number) => Date.now() - min * 60_000;
   let explorerMenu = false;
   let cmdHistory = [
@@ -120,8 +121,31 @@ export function installMock() {
           hosts = hosts.some((x) => x.id === saved.id) ? hosts.map((x) => (x.id === saved.id ? saved : x)) : [...hosts, saved];
           return saved;
         },
+        SaveHostWithSudo: async (h: Host, secret: string, _proxyPassword: string, sudoPassword: string, forgetSudo: boolean) => {
+          const previous = hosts.find((x) => x.id === h.id);
+          const saved = { ...h, id: h.id || id(), hasSecret: !!previous?.hasSecret || !!secret, hasSudoSecret: !forgetSudo && (!!previous?.hasSudoSecret || !!sudoPassword) };
+          hosts = previous ? hosts.map((x) => (x.id === saved.id ? saved : x)) : [...hosts, saved];
+          return saved;
+        },
         DeleteHost: async (hid: string) => void (hosts = hosts.filter((h) => h.id !== hid)),
         ClearSecret: async () => {},
+        ListPasswords: async () => passwords,
+        SavePassword: async (item: PasswordItem, password: string) => {
+          if (!item.title.trim()) throw new Error('Password title is required');
+          if (!item.id && !password) throw new Error('Password is required');
+          const saved = { id: item.id || id(), title: item.title.trim() };
+          passwords = passwords.some((p) => p.id === saved.id) ? passwords.map((p) => p.id === saved.id ? saved : p) : [...passwords, saved];
+          return saved;
+        },
+        DeletePassword: async (passwordId: string) => {
+          if (hosts.some((h) => h.passwordId === passwordId || h.sudoPasswordId === passwordId)) throw new Error('Remove this password from hosts that use it first');
+          passwords = passwords.filter((p) => p.id !== passwordId);
+        },
+        FillSavedPassword: async (sid: string, passwordId: string) => {
+          if (!sessions.has(sid)) throw new Error('Session closed');
+          if (!passwords.some((p) => p.id === passwordId)) throw new Error('Saved password no longer exists');
+          emit('term:data', sid, enc('\x1b[90m[password filled — demo]\x1b[0m'));
+        },
         PickKeyFile: async () => '~/.ssh/id_ed25519',
         ImportSSHConfig: async () => 0,
         ListSnippets: async () => snippets,

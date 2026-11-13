@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from 'react';
 import { history } from '../history';
-import type { GroupConfig, Host, Identity, KeyItem, Snippet, Tunnel, TunnelStatus, Workspace } from '../types';
+import type { GroupConfig, Host, Identity, KeyItem, PasswordItem, Snippet, Tunnel, TunnelStatus, Workspace } from '../types';
 import { buildGroupTree, groupBy, hostLabel, matches, timeAgo, type GroupNode } from '../util';
 import { Icon } from './Icon';
 import { colorCss, sshGroupKey } from '../colors';
@@ -18,6 +18,7 @@ export interface SidebarCtx {
   groups: GroupConfig[];
   snippets: Snippet[];
   identities: Identity[];
+  passwords: PasswordItem[];
   keys: KeyItem[];
   tunnels: Tunnel[];
   tunnelStatus: Record<string, TunnelStatus>;
@@ -47,6 +48,8 @@ export interface SidebarCtx {
   importKey(): void;
   openKey(k: KeyItem): void;
   editIdentity(i: Identity | null): void;
+  editPassword(item: PasswordItem | null): void;
+  fillPassword(item: PasswordItem): void;
   editTunnel(t: Tunnel | null): void;
   toggleTunnel(t: Tunnel): void;
   deleteTunnel(t: Tunnel): void;
@@ -67,7 +70,7 @@ const NAV: { id: Panel; icon: string; label: string }[] = [
   { id: 'rdp', icon: 'monitor', label: 'Remote Desktop' },
   { id: 'snippets', icon: 'code', label: 'Snippets' },
   { id: 'history', icon: 'clock', label: 'History' },
-  { id: 'keychain', icon: 'key', label: 'Keychain' },
+  { id: 'keychain', icon: 'key', label: 'Passwords & SSH keys' },
   { id: 'tunnels', icon: 'tunnel', label: 'Port forwarding' },
   { id: 'workspaces', icon: 'layout', label: 'Workspaces' },
   { id: 'logs', icon: 'file', label: 'Session logs' },

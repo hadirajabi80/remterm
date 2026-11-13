@@ -17,6 +17,7 @@ import type {
   Machine,
   Pane,
   PaneTarget,
+  PasswordItem,
   RdpData,
   RdpStatus,
   Snippet,
@@ -48,6 +49,7 @@ import {
   IdentityDialog,
   ImportKeyDialog,
   KeyDetailsDialog,
+  PasswordDialog,
   PickHostsDialog,
   TunnelDialog,
 } from './components/VaultDialogs';
@@ -55,6 +57,7 @@ import { Welcome } from './components/Welcome';
 import { RdpView } from './components/RdpView';
 import { WebRdpView, webRdpSessions } from './components/WebRdpView';
 import { FillPicker, type FillChoice } from './components/FillPicker';
+import { PasswordPicker } from './components/PasswordPicker';
 import { colorCss, hostColor, rdpGroupKey } from './colors';
 import type { TabPreviewData } from './components/TabPreview';
 import type { RdpCtx } from './components/RdpPanel';
@@ -133,6 +136,7 @@ export default function App() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [groups, setGroups] = useState<GroupConfig[]>([]);
   const [identities, setIdentities] = useState<Identity[]>([]);
+  const [passwords, setPasswords] = useState<PasswordItem[]>([]);
   const [keys, setKeys] = useState<KeyItem[]>([]);
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
   const [tunnelStatus, setTunnelStatus] = useState<Record<string, TunnelStatus>>({});
@@ -147,6 +151,8 @@ export default function App() {
   const [editingHost, setEditingHost] = useState<{ host: Host | null; group?: string } | null>(null);
   const [editingGroup, setEditingGroup] = useState<{ group: GroupConfig; isNew: boolean } | null>(null);
   const [editingIdentity, setEditingIdentity] = useState<Identity | null | undefined>(undefined);
+  const [editingPassword, setEditingPassword] = useState<{ item: PasswordItem | null; onSaved?: (item: PasswordItem) => void | Promise<void> } | undefined>(undefined);
+  const [passwordPicker, setPasswordPicker] = useState<{ session: TermSession; target: string } | null>(null);
   const [keyDialog, setKeyDialog] = useState<'generate' | 'import' | KeyItem | null>(null);
   const [editingTunnel, setEditingTunnel] = useState<Tunnel | null | undefined>(undefined);
   const [pickHosts, setPickHosts] = useState<Snippet | null>(null);
@@ -207,6 +213,8 @@ export default function App() {
     editingHost ||
     editingGroup ||
     editingIdentity !== undefined ||
+    editingPassword !== undefined ||
+    passwordPicker ||
     keyDialog ||
     editingTunnel !== undefined ||
     pickHosts ||
@@ -233,7 +241,7 @@ export default function App() {
   }, [toast]);
 
   const refresh = useCallback(async () => {
-    const [h, s, g, i, k, t, w] = await Promise.all([
+    const [h, s, g, i, k, t, w, p] = await Promise.all([
       api.listHosts(),
       api.listSnippets(),
       api.listGroups(),
@@ -241,6 +249,7 @@ export default function App() {
       api.listKeys(),
       api.listTunnels(),
       api.listWorkspaces(),
+      api.listPasswords(),
     ]);
     setHosts(h);
     setSnippets(s);
@@ -249,6 +258,7 @@ export default function App() {
     setKeys(k);
     setTunnels(t);
     setWorkspaces(w);
+    setPasswords(p);
   }, []);
 
   // ---- updates: check GitHub a few seconds after start (Settings can turn it off) ----
@@ -753,9 +763,9 @@ export default function App() {
     }
   };
 
-  const saveHost = async (h: Host, secret: string, proxyPassword: string, forget: boolean, connect: boolean) => {
+  const saveHost = async (h: Host, secret: string, proxyPassword: string, forget: boolean, connect: boolean, sudo: { password: string; forget: boolean }) => {
     if (forget && h.id) await api.clearSecret(h.id);
-    const saved = await api.saveHost(h, secret, proxyPassword);
+    const saved = await api.saveHost(h, secret, proxyPassword, sudo);
     await refresh();
     setEditingHost(null);
     if (connect) openTab({ kind: 'ssh', hostId: saved.id });
@@ -1359,6 +1369,7 @@ export default function App() {
       else if (ctrl && e.shiftKey && k === 'f') activeSession && setFindOpen(true);
       else if (ctrl && e.shiftKey && k === 'r') (activeRdp ? rdpAction('reconnect') : activeSession?.reconnect());
       else if (ctrl && e.altKey && !e.shiftKey && activeRdp && !activePane?.rdpWeb && k === 'k') rdpAction('fill');
+      else if (ctrl && e.altKey && !e.shiftKey && activeSession && k === 'k') setPasswordPicker({ session: activeSession, target: activePane?.subtitle || activePane?.title || 'Active terminal' });
       else if (ctrl && e.altKey && !e.shiftKey && activeRdp && !activePane?.rdpWeb && e.key === 'Enter') rdpAction('fullscreen');
       else if (ctrl && e.altKey && !e.shiftKey && activeRdp && k === 'r') rdpAction('reconnect');
       else if (ctrl && e.altKey && !e.shiftKey && rdpData && k === 'p') setPaletteOpen(true);
@@ -1403,6 +1414,7 @@ export default function App() {
       keywords: `${h.group} ${(h.tags ?? []).join(' ')}`,
       run: (o) => (o?.split ? split('auto', sshTarget(h)) : openTab(sshTarget(h))),
     }));
+    if (activeSession) items.push({ id: 'a:fill-password', kind: 'Action', label: 'Fill a saved password in this terminal', detail: 'Ctrl+Alt+K', run: () => setPasswordPicker({ session: activeSession, target: activePane?.subtitle || activePane?.title || 'Active terminal' }) });
     for (const m of [...(rdpData?.machines ?? [])].sort((a, b) => lastUsedMs(b) - lastUsedMs(a))) {
       items.push({
         id: 'r:' + m.id,
@@ -1503,6 +1515,7 @@ export default function App() {
     groups,
     snippets,
     identities,
+    passwords,
     keys,
     tunnels,
     tunnelStatus,
@@ -1544,6 +1557,11 @@ export default function App() {
     importKey: () => setKeyDialog('import'),
     openKey: (k) => setKeyDialog(k),
     editIdentity: setEditingIdentity,
+    editPassword: (item) => setEditingPassword({ item }),
+    fillPassword: (item) => {
+      if (!activeSession) return notify('Open a terminal first', 'error');
+      void activeSession.fillSavedPassword(item.id).catch((e) => notify(errorMessage(e), 'error'));
+    },
     editTunnel: setEditingTunnel,
     toggleTunnel: (t) => void toggleTunnel(t),
     deleteTunnel: (t) =>
@@ -1678,6 +1696,7 @@ export default function App() {
           dropIndex={tabDrag?.strip ?? null}
           onClose={requestCloseTab}
           onNewSsh={() => setPaletteOpen(true)}
+          onFillPassword={activeSession ? () => setPasswordPicker({ session: activeSession, target: activePane?.subtitle || activePane?.title || 'Active terminal' }) : undefined}
           onNewRdp={rdpAvailable ? () => (rdpData ? setPaletteOpen(true) : showRdpPanel()) : undefined}
           rdp={
             activeRdp
@@ -1801,6 +1820,8 @@ export default function App() {
           hosts={hosts}
           groups={groups}
           identities={identities}
+          passwords={passwords}
+          onPasswordDialog={(item, onSaved) => setEditingPassword({ item, onSaved })}
           keys={keys}
           onSave={saveHost}
           onClose={() => setEditingHost(null)}
@@ -1829,6 +1850,28 @@ export default function App() {
             })
           }
           onClose={() => setEditingGroup(null)}
+        />
+      )}
+      {passwordPicker && (
+        <PasswordPicker
+          items={passwords}
+          target={passwordPicker.target}
+          onFill={async (item) => { await passwordPicker.session.fillSavedPassword(item.id); setPasswordPicker(null); }}
+          onManage={(item, onSaved) => setEditingPassword({ item, onSaved })}
+          onClose={() => setPasswordPicker(null)}
+        />
+      )}
+      {editingPassword !== undefined && (
+        <PasswordDialog
+          item={editingPassword.item}
+          onSaved={async (item) => { await refresh(); await editingPassword.onSaved?.(item); setEditingPassword(undefined); }}
+          onDelete={(item) => setConfirm({
+            title: 'Delete saved password',
+            message: `Delete "${item.title}"? Remove it from any hosts that use it first.`,
+            confirmLabel: 'Delete',
+            run: async () => { await api.deletePassword(item.id); setEditingPassword(undefined); await refresh(); },
+          })}
+          onClose={() => setEditingPassword(undefined)}
         />
       )}
       {editingIdentity !== undefined && (
@@ -2011,10 +2054,10 @@ export default function App() {
             setFillPick(null);
             window.setTimeout(() => void rdp.focus(id).catch(() => {}), 150); // the keyboard back to the session
           }}
-          onPick={(key) => {
+          onPick={(key, passwordOnly, loginAndPassword) => {
             const id = fillPick.id;
             setFillPick(null);
-            rdp.fillWith(id, key).catch((e) => notify(errorMessage(e), 'error'));
+            rdp.fillWith(id, key, passwordOnly, loginAndPassword).catch((e) => notify(errorMessage(e), 'error'));
           }}
         />
       )}

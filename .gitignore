@@ -6,4 +6,6 @@ frontend/dist/
 installer/payload/*.gz
 rdp/engine/bin/
 rdp/engine/obj/
+rdp/tests/bin/
+rdp/tests/obj/
 *.exe.tmp

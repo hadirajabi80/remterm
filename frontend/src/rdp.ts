@@ -67,7 +67,7 @@ export const rdp = {
   refresh: (id: string) => call<void>('refresh', { id }),
   fill: (id: string) => call<void>('fill', { id }),
   /** Types a login picked in Remterm's list (key: 'bastion' or a login id). */
-  fillWith: (id: string, key: string) => call<void>('fillWith', { id, key }),
+  fillWith: (id: string, key: string, passwordOnly = false, loginAndPassword = false) => call<void>('fillWith', { id, key, passwordOnly, loginAndPassword }),
   /** Small picture of the session for the tab's hover preview ('' when there is none yet). */
   thumb: (id: string) => call<string>('thumb', { id }),
   fullscreen: (id: string) => call<void>('fullscreen', { id }),

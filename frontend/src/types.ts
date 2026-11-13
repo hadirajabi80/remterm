@@ -11,6 +11,10 @@ export interface Host {
   jumpHostId: string;
   startupCommand: string;
   hasSecret: boolean;
+  autoSudo?: boolean;
+  hasSudoSecret?: boolean;
+  passwordId?: string;
+  sudoPasswordId?: string;
   lastUsed: number; // unix ms, 0 = never
   favorite?: boolean; // pinned to the top of the lists
   protocol: string; // '' | 'ssh' | 'telnet' | 'serial'
@@ -64,6 +68,11 @@ export interface Identity {
   username: string;
   keyId: string;
   hasPassword: boolean;
+}
+
+export interface PasswordItem {
+  id: string;
+  title: string;
 }
 
 export interface KeyItem {

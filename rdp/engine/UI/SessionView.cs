@@ -516,8 +516,20 @@ internal sealed class SessionView : UserControl
         if (_rdp == null || !IsConnected) return;
         // Cross-process safe: docked sessions live inside Remterm's web-view window, where a plain
         // Focus() leaves the keyboard with the web view (keyboard "dead" until a click on the picture).
-        var input = _rdp.IsHandleCreated ? Win.FindDescendant(_rdp.Handle, "IHWindowClass") : IntPtr.Zero;
-        Win.FocusControl(_rdp, input);
+        FocusRdpInput();
+    }
+
+    private bool FocusRdpInput()
+    {
+        if (_rdp == null) return false;
+        return Win.FocusControl(_rdp, RdpInputWindow());
+    }
+
+    private IntPtr RdpInputWindow()
+    {
+        if (_rdp == null || !_rdp.IsHandleCreated) return IntPtr.Zero;
+        var input = Win.FindDescendant(_rdp.Handle, "IHWindowClass");
+        return input != IntPtr.Zero ? input : _rdp.Handle;
     }
 
     // ---------------------------------------------------------------- auto-type
@@ -608,7 +620,7 @@ internal sealed class SessionView : UserControl
             {
                 _typedWindows = true;
                 Diag.Log($"[{Machine.Name}] auto: Windows user name + password screen");
-                FillLogin(wc.Username, wc.Password);
+                FillLogin(wc.Username, wc.Password, windowsSignIn: true);
             }
             else CheckTimeout();
             return;
@@ -673,7 +685,7 @@ internal sealed class SessionView : UserControl
                 {
                     _typedWindows = true;
                     if (screen == ScreenReader.Screen.WindowsPassword) FillPassword(wc.Password);
-                    else FillLogin(wc.Username, wc.Password);
+                    else FillLogin(wc.Username, wc.Password, windowsSignIn: true);
                 }
                 else CheckTimeout();
                 return;
@@ -724,13 +736,15 @@ internal sealed class SessionView : UserControl
     /// <summary>
     /// Fills login + password on whatever screen is currently showing. With the US layout the keys are
     /// typed; otherwise each field is pasted from the clipboard (layout-independent).
+    /// Recognized Windows sign-in screens use Unicode keyboard input instead.
     /// The login, the Tab and the password go in separate steps with pauses: sent as one burst, a Tab
     /// the session missed put the password into the login box.
     /// </summary>
     /// <param name="keepWatching">Auto-fill of WALLIX's own login (step 1): keep watching for step 2.</param>
-    public async void FillLogin(string login, string password, bool keepWatching = false)
+    public async void FillLogin(string login, string password, bool keepWatching = false, bool windowsSignIn = false)
     {
         if (_typing || _rdp == null || !IsConnected) { if (!IsConnected) Notify?.Invoke(this, "Not connected."); return; }
+        if (password.Length == 0) { Notify?.Invoke(this, "No password is saved for this login."); return; }
         // Never type unless THIS session is the one on screen and no dialog is open — otherwise the
         // keystrokes (incl. Ctrl+A) would land in the app's own fields and wipe them.
         if (!IsOnScreen() || !Win.IsForeground(this))
@@ -738,8 +752,8 @@ internal sealed class SessionView : UserControl
             Notify?.Invoke(this, "Bring the session tab to the front (close any open dialog), then press Ctrl+Alt+K.");
             return;
         }
-        bool type = _usLayout && KeyTyper.CanType(login + password, out _);
-        if (!type && !_store.Data.Settings.RedirectClipboard)
+        bool type = !windowsSignIn && _usLayout && KeyTyper.CanType(login + password, out _);
+        if (!windowsSignIn && !type && !_store.Data.Settings.RedirectClipboard)
         {
             Notify?.Invoke(this, "This login can't be filled: turn on clipboard redirection or the US keyboard layout in ⚙ Settings.");
             return;
@@ -747,7 +761,7 @@ internal sealed class SessionView : UserControl
         if (!keepWatching) StopAutoType();
         _typing = true;
         bool ok = true, pasted = false, caps = false;
-        Diag.Log($"[{Machine.Name}] FILL ({(type ? "keys" : "clipboard")}) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
+        Diag.Log($"[{Machine.Name}] FILL ({(windowsSignIn ? "unicode" : type ? "keys" : "clipboard")}) login=\"{login}\" (password {password.Length} chars) clipboardRedirect={_store.Data.Settings.RedirectClipboard}");
         try
         {
             if (!await PrepareInput())
@@ -756,26 +770,23 @@ internal sealed class SessionView : UserControl
                 return;
             }
 
-            if (type)
+            if (type) caps = await CapsLockOffForTyping();
+            async Task<bool> FillField(string text)
             {
-                caps = await CapsLockOffForTyping();
-                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(login));
-                await Task.Delay(150);
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
-                await Task.Delay(250);
-                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
-                await Task.Delay(150);
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
-            }
-            else
-            {
+                if (windowsSignIn) return await TypeWindowsFieldAsync(text);
+                if (type) return await TypeKeysAsync(KeyTyper.SelectAllThen(text));
                 pasted = true;
-                ok &= await PasteField(login);              // login field
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Tab));
-                await Task.Delay(250);
-                ok &= await PasteField(password);           // password field
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+                return await PasteField(text);
             }
+            async Task<bool> PressKey(int key)
+            {
+                await Task.Delay(150);
+                if (!IsOnScreen() || !Win.IsForeground(this)) return false;
+                bool sent = SendKeysRobust(KeyTyper.KeyPress(key));
+                if (key == KeyTyper.Tab) await Task.Delay(250);
+                return sent;
+            }
+            ok = await CredentialFill.RunAsync(login, password, false, FillField, PressKey);
             await Task.Delay(300);
 
             if (Diag.Enabled)
@@ -804,36 +815,25 @@ internal sealed class SessionView : UserControl
     public async void FillPassword(string password)
     {
         if (_typing || _rdp == null || !IsConnected) return;
+        if (password.Length == 0) { Notify?.Invoke(this, "No password is saved for this login."); return; }
         if (!IsOnScreen() || !Win.IsForeground(this))
         {
             Notify?.Invoke(this, "Bring the session tab to the front, then press Ctrl+Alt+K.");
             return;
         }
-        bool type = _usLayout && KeyTyper.CanType(password, out _);
-        if (!type && !_store.Data.Settings.RedirectClipboard)
-        {
-            Notify?.Invoke(this, "This login can't be filled: turn on clipboard redirection or the US keyboard layout in ⚙ Settings.");
-            return;
-        }
         StopAutoType(); // the last screen there is to fill
         _typing = true;
-        bool ok = true, pasted = false, caps = false;
+        bool ok = false;
         try
         {
             if (!await PrepareInput()) { Notify?.Invoke(this, "Click once inside the session, then press Ctrl+Alt+K again."); return; }
-            if (type)
+            async Task<bool> PressKey(int key)
             {
-                caps = await CapsLockOffForTyping();
-                ok &= await TypeKeysAsync(KeyTyper.SelectAllThen(password));
                 await Task.Delay(150);
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
+                if (!IsOnScreen() || !Win.IsForeground(this)) return false;
+                return SendKeysRobust(KeyTyper.KeyPress(key));
             }
-            else
-            {
-                pasted = true;
-                ok &= await PasteField(password);
-                ok &= SendKeysRobust(KeyTyper.KeyPress(KeyTyper.Enter));
-            }
+            ok = await CredentialFill.RunAsync("", password, true, TypeWindowsFieldAsync, PressKey);
             await Task.Delay(300);
         }
         catch (Exception ex)
@@ -843,17 +843,17 @@ internal sealed class SessionView : UserControl
         }
         finally
         {
-            RestoreCapsLock(caps);
-            if (pasted) ClearClipboard();
             _typing = false;
         }
         if (!ok) Notify?.Invoke(this, "The password may not have been typed — press Ctrl+Alt+K and pick again.");
     }
 
     /// <summary>Ctrl+Alt+K: look at the screen first — a password-only screen gets just the password.</summary>
-    public async void FillSmart(string login, string password)
+    public async void FillSmart(string login, string password, bool passwordOnly = false, bool loginAndPassword = false)
     {
-        if (_rdp == null || !IsConnected) return;
+        if (_typing || _rdp == null || !IsConnected) return;
+        if (passwordOnly) { FillPassword(password); return; }
+        if (loginAndPassword) { FillLogin(login, password); return; }
         var screen = ScreenReader.Screen.Unknown;
         bool wallix = false;
         using (var bmp = PromptDetector.CaptureSession(_rdp))
@@ -869,16 +869,21 @@ internal sealed class SessionView : UserControl
                 catch (Exception ex) { Diag.Log($"[{Machine.Name}] fill: reading the screen failed: {ex.Message}"); }
             }
         }
-        if (screen == ScreenReader.Screen.WindowsPassword && !wallix) FillPassword(password);
-        else FillLogin(login, password);
+        switch (CredentialFill.Resolve(screen, wallix, passwordOnly))
+        {
+            case FillTarget.PasswordOnly: FillPassword(password); break;
+            case FillTarget.WindowsLogin: FillLogin(login, password, windowsSignIn: true); break;
+            case FillTarget.LoginAndPassword: FillLogin(login, password); break;
+            default: Notify?.Invoke(this, "Could not identify the fields. Choose Password only for Windows lock, or Username + password for a login form."); break;
+        }
     }
 
     /// <summary>The login list was shown by Remterm over the tab: wait until the session is back on screen and in front.</summary>
-    public async void FillSmartWhenShown(string login, string password)
+    public async void FillSmartWhenShown(string login, string password, bool passwordOnly = false, bool loginAndPassword = false)
     {
         for (int i = 0; i < 25 && !(IsOnScreen() && Win.IsForeground(this)); i++) await Task.Delay(100);
         await Task.Delay(150); // the first frames after showing again
-        FillSmart(login, password);
+        FillSmart(login, password, passwordOnly, loginAndPassword);
     }
 
     /// <summary>
@@ -889,6 +894,7 @@ internal sealed class SessionView : UserControl
     private async Task<bool> PrepareInput()
     {
         for (int i = 0; i < 30 && Win.ModifiersDown(); i++) await Task.Delay(50);
+        if (Win.ModifiersDown()) return false;
         if (!FocusSession()) return false;
         await Task.Delay(150);
         SendKeysRobust(KeyTyper.KeyPress(0x2A)); // Shift tap (harmless)
@@ -918,14 +924,32 @@ internal sealed class SessionView : UserControl
     /// <summary>Sends keys a few characters at a time, letting the session take in each group before the next.</summary>
     private async Task<bool> TypeKeysAsync(List<(int sc, bool up)> keys)
     {
-        bool ok = true;
         foreach (var chunk in KeyTyper.Chunks(keys, 24))
         {
             if (_rdp == null || !IsConnected) return false;
-            ok &= SendKeysRobust(chunk);
+            if (!SendKeysRobust(chunk)) return false;
             await Task.Delay(15);
         }
-        return ok;
+        return true;
+    }
+
+    private async Task<bool> TypeWindowsFieldAsync(string text)
+    {
+        // Validate the whole value before replacing any existing input.
+        var check = KeyTyper.UnicodeInputs(text);
+        Array.Clear(check);
+        if (_rdp == null || !IsConnected || !IsOnScreen() || !Win.IsForeground(this)) return false;
+        if (!SendKeysRobust(KeyTyper.SelectAll())) return false;
+        await Task.Delay(100);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (_rdp == null || !IsConnected || !IsOnScreen() || !Win.IsForeground(this) || !FocusSession()) return false;
+            // One complete character per packet; never split a surrogate pair.
+            // No scancode/clipboard fallback: it would change the password's meaning.
+            KeyTyper.SendUnicodeText(rune.ToString());
+            await Task.Delay(30);
+        }
+        return true;
     }
 
     private async Task<bool> PasteField(string text)
@@ -1010,7 +1034,7 @@ internal sealed class SessionView : UserControl
                     case KeyTyper.StepKind.Text: KeyTyper.AppendText(keys, step.Text); break;
                 }
                 if (_rdp == null || !IsConnected) return;
-                if (!SendKeysRobust(keys)) anyFailed = true;
+                if (!SendKeysRobust(keys)) { anyFailed = true; break; }
                 await Task.Delay(140);
             }
         }
@@ -1035,12 +1059,12 @@ internal sealed class SessionView : UserControl
         try
         {
             // Already typing into the session: moving the focus again between keys made it lose some.
-            if (Win.GetForegroundWindow() == root && Win.Contains(_rdp, Win.FocusedWindow())) return true;
+            if (Win.GetForegroundWindow() == root && Win.Contains(RdpInputWindow(), Win.FocusedWindow())) return true;
             for (int i = 0; i < 3; i++)
             {
                 FindForm()?.Activate(); // our own pop-out window; embedded sessions have none
                 try { _rdp.Ocx.Focus(); } catch { /* not all versions expose it */ }
-                if (Win.FocusControl(_rdp)) return true;
+                if (FocusRdpInput()) return true;
                 Thread.Sleep(60); // foreground rights can need a moment after activation
             }
             return false;
@@ -1065,6 +1089,13 @@ internal sealed class SessionView : UserControl
                 if (!FocusSession()) { Thread.Sleep(120); continue; }
                 KeyTyper.SendInputKeys(keys);
                 return true;
+            }
+            catch (KeyTyper.PartialInputException ex)
+            {
+                // Replaying a partially delivered password duplicates characters.
+                Diag.Log($"[{Machine.Name}] input stopped: {ex.Message}");
+                try { KeyTyper.SendInputKeys(new() { (0x2A, true), (0x1D, true) }); } catch { /* release typing modifiers only */ }
+                return false;
             }
             catch (Exception ex)
             {

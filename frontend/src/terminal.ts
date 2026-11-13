@@ -200,6 +200,14 @@ export class TermSession {
     return true;
   }
 
+  async fillSavedPassword(passwordId: string): Promise<void> {
+    if (!this.connected || !this.sessionId) throw new Error('Connect a terminal before filling a password');
+    if (this.flushing || this.pending) throw new Error('Wait for terminal input to finish before filling a password');
+    this.tracker.reset();
+    await api.fillSavedPassword(this.sessionId, passwordId);
+    this.focus();
+  }
+
   reconnect() {
     if (this.inFlight) return;
     this.retries = 0;

@@ -29,6 +29,8 @@ type Session struct {
 	log     *sessionLog // nil when logging is off
 	done    chan struct{}
 	once    sync.Once
+	inputMu sync.Mutex // serializes user input and automatic sudo replies
+	sudo    *sudoResponder
 }
 
 // ConnectRequest opens a shell either for a saved host (HostID) or an
@@ -112,6 +114,17 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 		},
 		done: make(chan struct{}),
 	}
+	if conn.host.AutoSudo {
+		password := conn.loginPassword
+		if conn.host.SudoPasswordID != "" {
+			password, _ = a.passwordValue(conn.host.SudoPasswordID)
+		} else if conn.host.HasSudoSecret {
+			// A configured sudo password must not silently fall back if the
+			// credential store is locked or the entry has been removed.
+			password = getNamedSecret("sudo:" + conn.host.ID)
+		}
+		s.sudo = newSudoResponder(conn.client.User(), password)
+	}
 	a.registerSession(s, "ssh:"+res.HostID, conn.host.Name)
 
 	go a.pump(s, stdout)
@@ -131,7 +144,7 @@ func (a *App) Connect(req ConnectRequest) (ConnectResult, error) {
 	go a.keepalive(s)
 
 	if cmd := strings.TrimSpace(conn.host.StartupCommand); cmd != "" {
-		_, _ = io.WriteString(stdin, cmd+"\n")
+		_ = s.writeInput(cmd + "\n")
 	}
 	return res, nil
 }
@@ -190,8 +203,7 @@ func (a *App) Write(id, data string) error {
 	if s == nil {
 		return errors.New("session closed")
 	}
-	_, err := io.WriteString(s.stdin, data)
-	return err
+	return s.writeInput(data)
 }
 
 func (a *App) Resize(id string, cols, rows int) error {
@@ -221,6 +233,7 @@ func (a *App) closeSession(s *Session, reason string, lost bool, exitCode int) {
 	s.once.Do(func() {
 		close(s.done)
 		s.closeFn()
+		s.stopSudo()
 		s.log.finish()
 		a.mu.Lock()
 		delete(a.sessions, s.id)
@@ -234,11 +247,13 @@ func (a *App) closeSession(s *Session, reason string, lost bool, exitCode int) {
 // xterm.js reassembles them.
 func (a *App) pump(s *Session, r io.Reader) {
 	buf := make([]byte, 32*1024)
+	var output sudoOutput
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			a.emit("term:data", s.id, base64.StdEncoding.EncodeToString(buf[:n]))
 			s.log.write(buf[:n])
+			s.observeSudo(&output, buf[:n])
 		}
 		if err != nil {
 			return

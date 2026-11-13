@@ -122,7 +122,7 @@ export function createRdpMock(emit: (name: string, ...data: any[]) => void) {
     disconnect: ({ id: sid }) => emit('rdp:event', 'session', { id: sid, title: 'Remote Desktop', status: 'disconnected', message: 'You disconnected.', mode: 'docked' }),
     focus: () => null,
     fill: ({ id: sid }) => emit('rdp:event', 'fillPicker', { id: sid, entries: creds.map((c) => ({ key: c.id, label: c.name, sub: c.username, bastion: false })) }),
-    fillWith: () => emit('rdp:event', 'notify', { text: 'Demo mode: nothing to type into.' }),
+      fillWith: ({ passwordOnly }) => emit('rdp:event', 'notify', { text: passwordOnly ? 'Demo mode: password-only fill selected. No remote session.' : 'Demo mode: nothing to type into.' }),
     thumb: () => '',
     fullscreen: () => null,
     popout: () => null,

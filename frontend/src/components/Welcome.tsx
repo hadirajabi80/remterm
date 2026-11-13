@@ -14,6 +14,7 @@ const SHORTCUTS: [string, string][] = [
   ['Next / previous tab', 'Ctrl+Tab'],
   ['Go to tab 1–9', 'Ctrl+1…9'],
   ['Find in terminal', 'Ctrl+Shift+F'],
+  ['Fill a saved password', 'Ctrl+Alt+K'],
   ['Reconnect', 'Ctrl+Shift+R'],
   ['Copy / paste', 'Ctrl+C / Ctrl+V'],
   ['Zoom in / out / reset', 'Ctrl + / − / 0'],

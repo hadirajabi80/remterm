@@ -8,6 +8,7 @@ import type {
   KnownHost,
   LocalShell,
   LogEntry,
+  PasswordItem,
   Snippet,
   TransferProgress,
   Tunnel,
@@ -61,9 +62,16 @@ export interface ConnectResult {
 
 export const api = {
   listHosts: () => call<Host[] | null>('ListHosts').then((r) => r ?? []),
-  saveHost: (h: Host, secret: string, proxyPassword = '') => call<Host>('SaveHost', h, secret, proxyPassword),
+  saveHost: (h: Host, secret: string, proxyPassword = '', sudo?: { password: string; forget: boolean }) =>
+    sudo
+      ? call<Host>('SaveHostWithSudo', h, secret, proxyPassword, sudo.password, sudo.forget)
+      : call<Host>('SaveHost', h, secret, proxyPassword),
   deleteHost: (id: string) => call<void>('DeleteHost', id),
   clearSecret: (id: string) => call<void>('ClearSecret', id),
+  listPasswords: () => call<PasswordItem[] | null>('ListPasswords').then((r) => r ?? []),
+  savePassword: (item: PasswordItem, password: string) => call<PasswordItem>('SavePassword', item, password),
+  deletePassword: (id: string) => call<void>('DeletePassword', id),
+  fillSavedPassword: (sessionId: string, passwordId: string) => call<void>('FillSavedPassword', sessionId, passwordId),
   pickKeyFile: () => call<string>('PickKeyFile'),
   importSSHConfig: () => call<number>('ImportSSHConfig'),
   listSnippets: () => call<Snippet[] | null>('ListSnippets').then((r) => r ?? []),

@@ -104,6 +104,26 @@ func (a *App) ListHosts() []Host {
 // SaveHost creates or updates a host. A non-empty secret is written to the
 // OS credential store; an empty one keeps whatever is already saved.
 func (a *App) SaveHost(h Host, secret, proxyPassword string) (Host, error) {
+	return a.saveHost(h, secret, proxyPassword, "", false)
+}
+
+// SaveHostWithSudo saves sudo credentials in the OS credential store alongside
+// the host's other credentials. Empty passwords keep the existing entry.
+func (a *App) SaveHostWithSudo(h Host, secret, proxyPassword, sudoPassword string, forgetSudo bool) (Host, error) {
+	return a.saveHost(h, secret, proxyPassword, sudoPassword, forgetSudo)
+}
+
+func (a *App) saveHost(h Host, secret, proxyPassword, sudoPassword string, forgetSudo bool) (Host, error) {
+	for _, id := range []string{h.PasswordID, h.SudoPasswordID} {
+		if id != "" {
+			if _, ok := find(a.ListPasswords(), id, passwordItemID); !ok {
+				return Host{}, errors.New("selected saved password no longer exists")
+			}
+		}
+	}
+	if sudoPassword != "" && !validSudoPassword(sudoPassword) {
+		return Host{}, errors.New("sudo password cannot contain terminal control characters")
+	}
 	h.Address = strings.TrimSpace(h.Address)
 	h.User = strings.TrimSpace(h.User)
 	h.Name = strings.TrimSpace(h.Name)
@@ -130,9 +150,10 @@ func (a *App) SaveHost(h Host, secret, proxyPassword string) (Host, error) {
 		h.JumpHostID = ""
 	}
 
-	h.HasSecret, h.LastUsed = false, 0
+	h.HasSecret, h.HasSudoSecret, h.LastUsed = false, false, 0
 	if old, ok := a.store.Host(h.ID); ok {
 		h.HasSecret, h.LastUsed = old.HasSecret, old.LastUsed
+		h.HasSudoSecret = old.HasSudoSecret
 		if h.Proxy != nil && old.Proxy != nil {
 			h.Proxy.HasSecret = old.Proxy.HasSecret
 		}
@@ -159,6 +180,15 @@ func (a *App) SaveHost(h Host, secret, proxyPassword string) (Host, error) {
 		}
 		h.HasSecret = true
 	}
+	if forgetSudo {
+		deleteNamedSecret("sudo:" + h.ID)
+		h.HasSudoSecret = false
+	} else if sudoPassword != "" {
+		if err := setNamedSecret("sudo:"+h.ID, sudoPassword); err != nil {
+			return Host{}, fmt.Errorf("save sudo password to credential store: %w", err)
+		}
+		h.HasSudoSecret = true
+	}
 	return h, a.store.PutHost(h)
 }
 
@@ -174,6 +204,7 @@ func (a *App) ClearSecret(id string) error {
 
 func (a *App) DeleteHost(id string) error {
 	deleteSecret(id)
+	deleteNamedSecret("sudo:" + id)
 	deleteNamedSecret("proxy:" + id)
 	return a.store.DeleteHost(id)
 }

@@ -975,6 +975,45 @@ kbd {
   grid-template-columns: 1fr 1fr;
   gap: 14px 14px;
 }
+.password-select-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.password-select-row > .input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.password-select-row > .btn {
+  flex-shrink: 0;
+}
+.password-picker-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.credential-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.credential-advanced > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.credential-advanced > .stack {
+  margin-top: 14px;
+}
+.password-picker-list .row {
+  gap: 8px;
+}
+.fill-password-tool {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  margin-right: 6px;
+}
 /* Side-by-side fields keep their boxes on one line even when one label wraps. */
 .form-grid > .field {
   justify-content: flex-end;

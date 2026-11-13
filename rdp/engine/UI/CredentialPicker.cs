@@ -11,8 +11,11 @@ internal sealed class CredentialPicker : Form
     private readonly List<FillEntry> _all;
     private readonly TextBox _search;
     private readonly ListBox _list;
+    private readonly ComboBox _fields;
 
     public FillEntry? Result { get; private set; }
+    public bool PasswordOnly => _fields.SelectedIndex == 1;
+    public bool LoginAndPassword => _fields.SelectedIndex == 2;
 
     public CredentialPicker(IEnumerable<FillEntry> entries)
     {
@@ -38,6 +41,13 @@ internal sealed class CredentialPicker : Form
             Font = new Font("Segoe UI", 14f), PlaceholderText = "Search a login…  (or press 1–9)",
         };
         var sep = new Panel { Dock = DockStyle.Top, Height = Theme.S(8), BackColor = Theme.Surface };
+        _fields = new ComboBox
+        {
+            Dock = DockStyle.Top, DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.Ui,
+        };
+        _fields.Items.AddRange(["Detect fields automatically", "Password only (Windows lock screen)", "Username + password"]);
+        _fields.SelectedIndex = 0;
         _list = new ListBox
         {
             Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Text,
@@ -48,6 +58,7 @@ internal sealed class CredentialPicker : Form
         _list.DoubleClick += (_, _) => Accept();
         inner.Controls.Add(_list);
         inner.Controls.Add(sep);
+        inner.Controls.Add(_fields);
         inner.Controls.Add(_search);
         inner.Controls.Add(title);
         Controls.Add(inner);
@@ -83,6 +94,7 @@ internal sealed class CredentialPicker : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        if (_fields.Focused && keyData != Keys.Escape) return base.ProcessCmdKey(ref msg, keyData);
         switch (keyData)
         {
             case Keys.Escape: DialogResult = DialogResult.Cancel; Close(); return true;
